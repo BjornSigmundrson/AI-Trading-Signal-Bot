@@ -5,7 +5,7 @@ import ccxt
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 
-load_dotenv()
+load_dotenv(override=False)
 
 SYMBOL = os.getenv("SYMBOL", "BTC/USDT")
 CYCLE_SEC = 3600
