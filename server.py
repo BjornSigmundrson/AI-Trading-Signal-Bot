@@ -75,6 +75,27 @@ def index():
 @app.route("/status")
 def status():
     try:
+        import psycopg2
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            cur.execute("SELECT data FROM signals ORDER BY created_at DESC LIMIT 1")
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if row:
+                data = row[0]
+                return jsonify({
+                    "status": "running",
+                    "symbol": data.get("symbol"),
+                    "price": data.get("price"),
+                    "action": data.get("action"),
+                    "updated": data.get("timestamp")
+                })
+    except Exception as e:
+        print("БД ошибка:", e)
+    try:
         with open("last_signal.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         return jsonify({
