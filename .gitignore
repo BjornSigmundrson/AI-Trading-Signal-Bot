@@ -1,0 +1,8 @@
+.env
+node_modules/
+__pycache__/
+*.exe
+last_signal.json
+package-lock.json
+wallet_data.json
+*.json.bak

@@ -1,0 +1,11 @@
+{
+  "name": "trading-agent",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "latest",
+    "dotenv": "latest"
+  },
+  "engines": { "node": ">=20.0.0" }
+}

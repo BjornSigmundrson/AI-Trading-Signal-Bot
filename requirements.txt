@@ -1,0 +1,5 @@
+langchain-anthropic
+pandas
+ta
+ccxt
+python-dotenv
