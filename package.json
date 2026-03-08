@@ -4,8 +4,11 @@
   "main": "server.js",
   "scripts": { "start": "node server.js" },
   "dependencies": {
-    "express": "latest",
-    "dotenv": "latest"
+    "express": "^4.18.2",
+    "dotenv": "^16.0.3"
   },
-  "engines": { "node": ">=20.0.0" }
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  }
 }

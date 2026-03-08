@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "python311"]
+
+[phases.install]
+cmds = ["npm install", "pip install langchain-anthropic pandas ta ccxt python-dotenv"]
+
+[start]
+cmd = "node server.js"
