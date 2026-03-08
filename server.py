@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 
 load_dotenv(override=False)
 
+import threading
+import subprocess
+import sys
+
+def run_agent():
+    subprocess.run([sys.executable, "agent.py"])
+
+threading.Thread(target=run_agent, daemon=True).start()
+
 app = Flask(__name__)
 
 PORT = int(os.getenv("PORT", 4021))
