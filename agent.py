@@ -91,7 +91,47 @@ if __name__ == "__main__":
         print("Сигнал: " + str(signal.get("action")) + " | Уверенность: " + str(int(signal.get("confidence", 0) * 100)) + "%")
         print(str(signal.get("reason", "")))
         with open("last_signal.json", "w", encoding="utf-8") as f:
-            json.dump(signal, f, ensure_ascii=False, indent=2)
-        print("Сохранено в last_signal.json")
+    json.dump(signal, f, ensure_ascii=False, indent=2)
+print("Сохранено в last_signal.json")
+try:
+    import psycopg2
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS signals (
+                id SERIAL PRIMARY KEY,
+                data JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("INSERT INTO signals (data) VALUES (%s)", [json.dumps(signal)])
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Сохранено в базу данных")
+except Exception as e:
+    print("БД ошибка:", e)
+try:
+    import psycopg2
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS signals (
+                id SERIAL PRIMARY KEY,
+                data JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("INSERT INTO signals (data) VALUES (%s)", [json.dumps(signal)])
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Сохранено в базу данных")
+except Exception as e:
+    print("БД ошибка:", e)
         print("Следующий цикл через " + str(CYCLE_SEC // 60) + " минут...")
         time.sleep(CYCLE_SEC)
