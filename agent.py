@@ -89,7 +89,6 @@ def save_signal(symbol, signal):
     key = symbol.replace("/", "_")
     with open("signal_" + key + ".json", "w", encoding="utf-8") as f:
         json.dump(signal, f, ensure_ascii=False, indent=2)
-    # также сохраняем BTC как last_signal.json для совместимости
     if symbol == "BTC/USDT":
         with open("last_signal.json", "w", encoding="utf-8") as f:
             json.dump(signal, f, ensure_ascii=False, indent=2)
@@ -101,17 +100,19 @@ def save_signal(symbol, signal):
             conn = psycopg2.connect(db_url)
             cur = conn.cursor()
             cur.execute("""
-    CREATE TABLE IF NOT EXISTS signals (
-        id SERIAL PRIMARY KEY,
-        data JSONB,
-        created_at TIMESTAMP DEFAULT NOW()
-    )
-""")
-cur.execute("""
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS symbol VARCHAR(20)
-""")
-            cur.execute("INSERT INTO signals (symbol, data) VALUES (%s, %s)",
-                       [symbol, json.dumps(signal)])
+                CREATE TABLE IF NOT EXISTS signals (
+                    id SERIAL PRIMARY KEY,
+                    data JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                ALTER TABLE signals ADD COLUMN IF NOT EXISTS symbol VARCHAR(20)
+            """)
+            cur.execute(
+                "INSERT INTO signals (symbol, data) VALUES (%s, %s)",
+                [symbol, json.dumps(signal)]
+            )
             conn.commit()
             cur.close()
             conn.close()
