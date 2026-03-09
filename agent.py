@@ -18,7 +18,7 @@ print("Anthropic API ключ найден")
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
 def make_exchange():
-    for ex in [ccxt.coinbase(), ccxt.kraken(), ccxt.binance()]:
+    for ex in [ccxt.okx(), ccxt.kraken(), ccxt.binance()]:
         try:
             ex.fetch_ticker("BTC/USDT")
             print("Биржа: " + ex.id)
