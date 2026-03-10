@@ -23,7 +23,7 @@ NETWORK = os.getenv("NETWORK_ID", "base-mainnet")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:" + str(PORT))
 ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT", "DOGE/USDT", "XRP/USDT"]
 
 if not PAY_TO:
     print("ERROR: RECEIVING_WALLET not set")
@@ -124,48 +124,20 @@ def agent_card():
             "assets": ["USDC"]
         },
         "endpoints": [
-            {
-                "path": "/signal/BTC",
-                "method": "GET",
-                "description": "BTC/USDT trading signal",
-                "price_usd": float(PRICE),
-                "currency": "USDC",
-                "network": "base-mainnet"
-            },
-            {
-                "path": "/signal/ETH",
-                "method": "GET",
-                "description": "ETH/USDT trading signal",
-                "price_usd": float(PRICE),
-                "currency": "USDC",
-                "network": "base-mainnet"
-            },
-            {
-                "path": "/signal/SOL",
-                "method": "GET",
-                "description": "SOL/USDT trading signal",
-                "price_usd": float(PRICE),
-                "currency": "USDC",
-                "network": "base-mainnet"
-            },
-            {
-                "path": "/status/BTC",
-                "method": "GET",
-                "description": "Free BTC status",
-                "price_usd": 0
-            },
-            {
-                "path": "/status/ETH",
-                "method": "GET",
-                "description": "Free ETH status",
-                "price_usd": 0
-            },
-            {
-                "path": "/status/SOL",
-                "method": "GET",
-                "description": "Free SOL status",
-                "price_usd": 0
-            }
+            {"path": "/signal/BTC", "method": "GET", "description": "BTC/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/ETH", "method": "GET", "description": "ETH/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/SOL", "method": "GET", "description": "SOL/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/AVAX", "method": "GET", "description": "AVAX/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/LINK", "method": "GET", "description": "LINK/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/DOGE", "method": "GET", "description": "DOGE/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/signal/XRP", "method": "GET", "description": "XRP/USDT trading signal", "price_usd": float(PRICE), "currency": "USDC", "network": "base-mainnet"},
+            {"path": "/status/BTC", "method": "GET", "description": "Free BTC status", "price_usd": 0},
+            {"path": "/status/ETH", "method": "GET", "description": "Free ETH status", "price_usd": 0},
+            {"path": "/status/SOL", "method": "GET", "description": "Free SOL status", "price_usd": 0},
+            {"path": "/status/AVAX", "method": "GET", "description": "Free AVAX status", "price_usd": 0},
+            {"path": "/status/LINK", "method": "GET", "description": "Free LINK status", "price_usd": 0},
+            {"path": "/status/DOGE", "method": "GET", "description": "Free DOGE status", "price_usd": 0},
+            {"path": "/status/XRP", "method": "GET", "description": "Free XRP status", "price_usd": 0},
         ],
         "contact": "darex20003@gmail.com",
         "x402_facilitator": "https://x402.org/facilitator"

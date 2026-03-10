@@ -2,6 +2,8 @@ import os
 import json
 import time
 import datetime
+import urllib.request
+import xml.etree.ElementTree as ET
 import pandas as pd
 import ta
 import ccxt
@@ -10,7 +12,16 @@ from langchain_anthropic import ChatAnthropic
 
 load_dotenv(override=False)
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT",
+    "AVAX/USDT", "LINK/USDT", "DOGE/USDT", "XRP/USDT"
+]
+
+NEWS_FEEDS = [
+    "https://cointelegraph.com/rss",
+    "https://coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+]
 
 api_key = os.getenv("ANTHROPIC_API_KEY")
 if not api_key:
@@ -32,6 +43,37 @@ def make_exchange():
 
 exchange = make_exchange()
 llm = ChatAnthropic(model="claude-sonnet-4-6", temperature=0)
+
+
+def fetch_news(coin):
+    headlines = []
+    coin_name = coin.split("/")[0].lower()
+    name_map = {
+        "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
+        "avax": "avalanche", "link": "chainlink", "doge": "dogecoin", "xrp": "ripple"
+    }
+    keywords = [coin_name, name_map.get(coin_name, coin_name)]
+
+    for feed_url in NEWS_FEEDS:
+        try:
+            req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                content = resp.read()
+            root = ET.fromstring(content)
+            for item in root.iter("item"):
+                title_el = item.find("title")
+                if title_el is not None and title_el.text:
+                    title = title_el.text.strip()
+                    if any(kw in title.lower() for kw in keywords + ["crypto", "market", "bitcoin"]):
+                        headlines.append(title)
+                if len(headlines) >= 10:
+                    break
+        except Exception:
+            continue
+        if len(headlines) >= 10:
+            break
+
+    return headlines[:8]
 
 
 def analyze_timeframe(df):
@@ -78,11 +120,17 @@ def analyze_timeframe(df):
     else:
         bb_position = "LOWER_HALF"
 
-    atr = float(ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range().iloc[-1])
+    atr = float(ta.volatility.AverageTrueRange(
+        df["high"], df["low"], df["close"], window=14
+    ).average_true_range().iloc[-1])
     atr_pct = round(atr / price * 100, 2)
 
-    williams_r = float(ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r().iloc[-1])
-    cci = float(ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci().iloc[-1])
+    williams_r = float(ta.momentum.WilliamsRIndicator(
+        df["high"], df["low"], df["close"], lbp=14
+    ).williams_r().iloc[-1])
+    cci = float(ta.trend.CCIIndicator(
+        df["high"], df["low"], df["close"], window=20
+    ).cci().iloc[-1])
 
     vol_avg = float(df["vol"].tail(20).mean())
     vol_current = float(df["vol"].iloc[-1])
@@ -95,43 +143,40 @@ def analyze_timeframe(df):
         vol_signal = "NORMAL"
 
     return {
-        "price": round(price, 4),
+        "price": round(price, 6),
         "rsi": round(rsi, 1),
         "stoch_k": round(stoch_k * 100, 1),
         "stoch_d": round(stoch_d * 100, 1),
         "macd": "BULLISH" if macd_bullish else "BEARISH",
-        "macd_hist": round(macd_hist, 4),
+        "macd_hist": round(macd_hist, 6),
         "trend": trend,
         "above_ema200": price > ema200,
-        "ema9": round(ema9, 4),
-        "ema21": round(ema21, 4),
-        "ema50": round(ema50, 4),
-        "ema200": round(ema200, 4),
+        "ema9": round(ema9, 6),
+        "ema21": round(ema21, 6),
+        "ema50": round(ema50, 6),
+        "ema200": round(ema200, 6),
         "bb_position": bb_position,
         "bb_width": bb_width,
-        "bb_upper": round(bb_upper, 4),
-        "bb_lower": round(bb_lower, 4),
+        "bb_upper": round(bb_upper, 6),
+        "bb_lower": round(bb_lower, 6),
         "atr_pct": atr_pct,
         "williams_r": round(williams_r, 1),
         "cci": round(cci, 1),
         "volume": vol_signal,
         "vol_ratio": vol_ratio,
-        "resistance": round(float(df["high"].tail(20).max()), 4),
-        "support": round(float(df["low"].tail(20).min()), 4),
+        "resistance": round(float(df["high"].tail(20).max()), 6),
+        "support": round(float(df["low"].tail(20).min()), 6),
     }
 
 
 def get_market_data(symbol):
-    result = {}
+    result = {"symbol": symbol}
 
-    # 1h timeframe
     ohlcv_1h = exchange.fetch_ohlcv(symbol, "1h", limit=200)
     df_1h = pd.DataFrame(ohlcv_1h, columns=["ts", "open", "high", "low", "close", "vol"])
     result["tf_1h"] = analyze_timeframe(df_1h)
-    result["symbol"] = symbol
     result["price"] = result["tf_1h"]["price"]
 
-    # 4h timeframe
     try:
         ohlcv_4h = exchange.fetch_ohlcv(symbol, "4h", limit=200)
         df_4h = pd.DataFrame(ohlcv_4h, columns=["ts", "open", "high", "low", "close", "vol"])
@@ -140,7 +185,6 @@ def get_market_data(symbol):
         print("4h error: " + str(e))
         result["tf_4h"] = None
 
-    # 1d timeframe
     try:
         ohlcv_1d = exchange.fetch_ohlcv(symbol, "1d", limit=200)
         df_1d = pd.DataFrame(ohlcv_1d, columns=["ts", "open", "high", "low", "close", "vol"])
@@ -174,10 +218,22 @@ def run_cycle(symbol):
     except Exception as e:
         return {"symbol": symbol, "action": "HOLD", "confidence": 0, "reason": "Error: " + str(e)}
 
+    # Fetch news
+    news = []
+    try:
+        news = fetch_news(symbol)
+        print("News fetched: " + str(len(news)) + " headlines")
+    except Exception as e:
+        print("News error: " + str(e))
+
+    news_block = ""
+    if news:
+        news_block = "\nRECENT NEWS HEADLINES:\n" + "\n".join("- " + h for h in news) + "\n"
+
     lines = [
-        "You are a professional crypto trader. Analyze ALL timeframes and give a signal.",
-        "Use multi-timeframe confluence — higher timeframes (4h, 1d) confirm the direction,",
-        "lower timeframe (1h) gives the entry point.",
+        "You are a professional crypto trader. Analyze ALL timeframes and recent news, then give a signal.",
+        "Use multi-timeframe confluence — higher timeframes (4h, 1d) confirm direction,",
+        "lower timeframe (1h) gives entry point. News can confirm or contradict technical signals.",
         "",
         "SYMBOL: " + market["symbol"],
         "CURRENT PRICE: $" + str(market["price"]),
@@ -187,14 +243,16 @@ def run_cycle(symbol):
         tf_summary(market["tf_4h"], "4H TIMEFRAME"),
         "",
         tf_summary(market["tf_1d"], "1D TIMEFRAME"),
-        "",
+        news_block,
         "CONFLUENCE RULES:",
         "- If 1d and 4h trend is UP and 1h gives BUY signal → STRONG BUY",
         "- If timeframes conflict → HOLD or reduce confidence",
-        "- If 1d trend is DOWN but 1h oversold → possible short-term bounce only",
+        "- Positive news + bullish technicals = higher confidence",
+        "- Negative news + bearish technicals = higher confidence for SELL",
+        "- News alone without technical confirmation = lower confidence",
         "",
         "Reply ONLY with valid JSON, no markdown:",
-        '{"action":"HOLD","confidence":0.7,"stop_loss":0,"take_profit":0,"reason":"detailed reason in Russian mentioning all 3 timeframes"}',
+        '{"action":"HOLD","confidence":0.7,"stop_loss":0,"take_profit":0,"reason":"detailed reason in Russian mentioning timeframes and news if relevant"}',
         "",
         "action: BUY, SELL or HOLD only",
         "confidence: 0.0 to 1.0",
@@ -220,6 +278,7 @@ def run_cycle(symbol):
         "tf_1h": market["tf_1h"],
         "tf_4h": market["tf_4h"],
         "tf_1d": market["tf_1d"],
+        "news": news,
     }
     result.update(decision)
     result["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -275,7 +334,7 @@ def wait_until_next_hour():
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("Agent started — Multi-Timeframe (1h/4h/1d)")
+    print("Agent started — Multi-Timeframe + News")
     print("Pairs: " + ", ".join(SYMBOLS))
     print("Cycle: every hour at :00")
     print("=" * 50)
@@ -294,6 +353,7 @@ if __name__ == "__main__":
             print("1H: RSI=" + str(tf1.get("rsi")) + " MACD=" + str(tf1.get("macd")) + " Trend=" + str(tf1.get("trend")))
             print("4H: RSI=" + str(tf4.get("rsi")) + " MACD=" + str(tf4.get("macd")) + " Trend=" + str(tf4.get("trend")))
             print("1D: RSI=" + str(tf1d.get("rsi")) + " MACD=" + str(tf1d.get("macd")) + " Trend=" + str(tf1d.get("trend")))
+            print("News: " + str(len(signal.get("news", []))) + " headlines")
             print("Signal: " + str(signal.get("action")) + " | Confidence: " + str(int(signal.get("confidence", 0) * 100)) + "%")
             print(str(signal.get("reason", "")))
             save_signal(symbol, signal)
