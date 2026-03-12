@@ -31,18 +31,44 @@ if not api_key:
 print("Anthropic API key found")
 
 
-def make_exchange():
-    for ex in [ccxt.okx(), ccxt.kraken(), ccxt.kucoin()]:
+EXCHANGES = None
+
+def init_exchanges():
+    global EXCHANGES
+    exs = []
+    for cls in [ccxt.okx, ccxt.bybit, ccxt.kucoin, ccxt.coinbaseadvanced, ccxt.kraken]:
         try:
-            ex.fetch_ticker("BTC/USDT")
-            print("Exchange: " + ex.id)
-            return ex
-        except Exception:
+            ex = cls()
+            ex.load_markets()
+            exs.append(ex)
+            print("Exchange loaded: " + ex.id)
+        except Exception as e:
+            print("Exchange skip " + cls.__name__ + ": " + str(e))
+    if not exs:
+        raise Exception("No exchanges available")
+    EXCHANGES = exs
+    print("Total exchanges: " + str(len(EXCHANGES)))
+
+
+def fetch_ohlcv_with_fallback(symbol, timeframe, limit=200):
+    """Try each exchange until one returns data for this symbol+timeframe."""
+    errors = []
+    for ex in EXCHANGES:
+        try:
+            # Check if exchange has this symbol
+            if symbol not in ex.markets:
+                continue
+            data = ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+            if data and len(data) > 50:
+                print("  " + symbol + " " + timeframe + " from " + ex.id)
+                return data
+        except Exception as e:
+            errors.append(ex.id + ": " + str(e))
             continue
-    raise Exception("All exchanges unavailable")
+    raise Exception("No exchange has " + symbol + " " + timeframe + " — " + "; ".join(errors))
 
 
-exchange = make_exchange()
+init_exchanges()
 llm = ChatAnthropic(model="claude-sonnet-4-6", temperature=0)
 
 
@@ -100,12 +126,18 @@ def init_db():
 
 
 def get_current_price(symbol):
-    try:
-        ticker = exchange.fetch_ticker(symbol)
-        return float(ticker["last"])
-    except Exception as e:
-        print("Price error for " + symbol + ": " + str(e))
-        return None
+    for ex in EXCHANGES:
+        try:
+            if symbol not in ex.markets:
+                continue
+            ticker = ex.fetch_ticker(symbol)
+            price = float(ticker["last"])
+            if price > 0:
+                return price
+        except Exception as e:
+            print("Price error " + ex.id + " for " + symbol + ": " + str(e))
+            continue
+    return None
 
 
 def check_signal_result(action, price_at_signal, price_now):
@@ -353,19 +385,19 @@ def analyze_timeframe(df):
 
 def get_market_data(symbol):
     result = {"symbol": symbol}
-    ohlcv_1h = exchange.fetch_ohlcv(symbol, "1h", limit=200)
+    ohlcv_1h = fetch_ohlcv_with_fallback(symbol, "1h", limit=200)
     df_1h = pd.DataFrame(ohlcv_1h, columns=["ts", "open", "high", "low", "close", "vol"])
     result["tf_1h"] = analyze_timeframe(df_1h)
     result["price"] = result["tf_1h"]["price"]
     try:
-        ohlcv_4h = exchange.fetch_ohlcv(symbol, "4h", limit=200)
+        ohlcv_4h = fetch_ohlcv_with_fallback(symbol, "4h", limit=200)
         df_4h = pd.DataFrame(ohlcv_4h, columns=["ts", "open", "high", "low", "close", "vol"])
         result["tf_4h"] = analyze_timeframe(df_4h)
     except Exception as e:
         print("4h error: " + str(e))
         result["tf_4h"] = None
     try:
-        ohlcv_1d = exchange.fetch_ohlcv(symbol, "1d", limit=200)
+        ohlcv_1d = fetch_ohlcv_with_fallback(symbol, "1d", limit=200)
         df_1d = pd.DataFrame(ohlcv_1d, columns=["ts", "open", "high", "low", "close", "vol"])
         result["tf_1d"] = analyze_timeframe(df_1d)
     except Exception as e:
