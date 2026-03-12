@@ -282,7 +282,7 @@ STATS_HTML = """<!DOCTYPE html>
     </div>
     <div id="tab-results" style="display:none">
       <table>
-        <thead><tr><th>Pair</th><th>Action</th><th>Entry Price</th><th>Result 1h</th><th>Result 4h</th><th>Result 24h</th><th>Time</th></tr></thead>
+        <thead><tr><th>Pair</th><th>Action</th><th>Entry Price</th><th>Change</th><th>Result 1h</th><th>Result 4h</th><th>Result 24h</th><th>Time</th></tr></thead>
         <tbody id="results-table"><tr><td colspan="7" style="color:#8899aa">Loading...</td></tr></tbody>
       </table>
     </div>
@@ -390,21 +390,22 @@ function renderAccuracy() {
     html += '</div>';
   }
 
-  // By action
-  const ba = accuracyData.by_action;
-  if (ba && Object.keys(ba).length > 0) {
-    html += '<h3 style="color:#8899aa;font-size:13px;margin:16px 0 10px;text-transform:uppercase;letter-spacing:1px">Accuracy by Signal Type (24h)</h3>';
-    html += '<div class="accuracy-grid">';
-    for (const [action, d] of Object.entries(ba)) {
-      const col = colorForAcc(d.accuracy);
-      html += '<div class="acc-card">' +
-        '<span class="badge ' + action + '">' + action + '</span>' +
-        '<div class="acc-val" style="color:' + col + '">' + (d.accuracy !== null ? d.accuracy + "%" : "—") + '</div>' +
-        '<div class="acc-sub">' + d.wins + "W / " + d.losses + "L (" + d.total + ")</div>" +
-      '</div>';
-    }
-    html += '</div>';
+  // By action — always show BUY / SELL / HOLD even if no data yet
+  const ba = accuracyData.by_action || {};
+  html += '<h3 style="color:#8899aa;font-size:13px;margin:16px 0 10px;text-transform:uppercase;letter-spacing:1px">Accuracy by Signal Type (24h)</h3>';
+  html += '<div class="accuracy-grid">';
+  for (const action of ["BUY", "SELL", "HOLD"]) {
+    const d = ba[action] || {wins: 0, losses: 0, neutral: 0, total: 0, accuracy: null};
+    const col = colorForAcc(d.accuracy);
+    const barW = d.accuracy !== null ? d.accuracy : 0;
+    html += '<div class="acc-card">' +
+      '<span class="badge ' + action + '">' + action + '</span>' +
+      '<div class="acc-val" style="color:' + col + '">' + (d.accuracy !== null ? d.accuracy + "%" : "—") + '</div>' +
+      '<div class="acc-bar-wrap"><div class="acc-bar" style="width:' + barW + '%;background:' + col + '"></div></div>' +
+      '<div class="acc-sub">' + d.wins + "W / " + d.losses + "L / " + (d.neutral||0) + "N (" + d.total + " signals)</div>" +
+    '</div>';
   }
+  html += '</div>';
 
   el.innerHTML = html;
 }
@@ -412,12 +413,24 @@ function renderAccuracy() {
 function renderResultsTable() {
   const tbody = document.getElementById("results-table");
   if (!accuracyData || !accuracyData.history || !accuracyData.history.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="no-data">No results yet — data appears after signals age 1h+</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="no-data">No results yet — data appears after signals age 1h+</td></tr>';
     return;
   }
   tbody.innerHTML = accuracyData.history.map(r => {
     const ts = r.time ? r.time.substring(0, 16).replace("T", " ") : "—";
-    const price = r.price_at_signal ? "$" + Number(r.price_at_signal).toLocaleString() : "—";
+    const entryPrice = r.price_at_signal || 0;
+    const price = entryPrice ? "$" + Number(entryPrice).toLocaleString() : "—";
+    // Price change 24h
+    let change24 = "—";
+    if (r.price_24h && entryPrice) {
+      const pct = ((r.price_24h - entryPrice) / entryPrice * 100).toFixed(2);
+      const col = pct > 0 ? "#00cc88" : pct < 0 ? "#ff4466" : "#8899aa";
+      change24 = '<span style="color:' + col + '">' + (pct > 0 ? "+" : "") + pct + "%</span>";
+    } else if (r.price_1h && entryPrice) {
+      const pct = ((r.price_1h - entryPrice) / entryPrice * 100).toFixed(2);
+      const col = pct > 0 ? "#00cc88" : pct < 0 ? "#ff4466" : "#8899aa";
+      change24 = '<span style="color:' + col + '">' + (pct > 0 ? "+" : "") + pct + "% (1h)</span>";
+    }
     const r1 = r.result_1h ? '<span class="badge ' + r.result_1h + '">' + r.result_1h + '</span>' : '<span style="color:#445566">—</span>';
     const r4 = r.result_4h ? '<span class="badge ' + r.result_4h + '">' + r.result_4h + '</span>' : '<span style="color:#445566">—</span>';
     const r24 = r.result_24h ? '<span class="badge ' + r.result_24h + '">' + r.result_24h + '</span>' : '<span style="color:#445566">—</span>';
@@ -425,6 +438,7 @@ function renderResultsTable() {
       '<td>' + r.symbol + '</td>' +
       '<td><span class="badge ' + r.action + '">' + r.action + '</span></td>' +
       '<td>' + price + '</td>' +
+      '<td>' + change24 + '</td>' +
       '<td>' + r1 + '</td>' +
       '<td>' + r4 + '</td>' +
       '<td>' + r24 + '</td>' +
