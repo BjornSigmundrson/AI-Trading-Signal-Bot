@@ -36,7 +36,8 @@ EXCHANGES = None
 def init_exchanges():
     global EXCHANGES
     exs = []
-    for cls in [ccxt.okx, ccxt.bybit, ccxt.kucoin, ccxt.coinbaseadvanced, ccxt.kraken]:
+    # coinbaseadvanced removed — causes hangs; bybit geo-blocked on Railway
+    for cls in [ccxt.okx, ccxt.kucoin, ccxt.kraken]:
         try:
             ex = cls()
             ex.load_markets()
@@ -417,8 +418,8 @@ def fetch_whale_alerts(coin):
 
 
     # Source 2: OKX Funding Rate (works on Railway, no geo-block)
+    coin_okx = coin_name.upper() + "-USDT-SWAP"
     try:
-        coin_okx = coin_name.upper() + "-USDT-SWAP"
         url_okx = "https://www.okx.com/api/v5/public/funding-rate?instId=" + coin_okx
         req_okx = urllib.request.Request(url_okx, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req_okx, timeout=6) as resp_okx:

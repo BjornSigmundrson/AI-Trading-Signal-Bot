@@ -36,7 +36,7 @@ def get_db():
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         return None
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(db_url, connect_timeout=5)
 
 
 def get_accuracy_stats():
@@ -672,7 +672,7 @@ def read_signal(symbol):
     try:
         db_url = os.getenv("DATABASE_URL")
         if db_url:
-            conn = psycopg2.connect(db_url)
+            conn = psycopg2.connect(db_url, connect_timeout=5)
             cur = conn.cursor()
             cur.execute("SELECT data FROM signals WHERE symbol=%s ORDER BY created_at DESC LIMIT 1", [symbol])
             row = cur.fetchone()
