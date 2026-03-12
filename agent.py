@@ -415,50 +415,47 @@ def fetch_whale_alerts(coin):
     except Exception as e:
         print("CoinGecko whale proxy error: " + str(e))
 
-    # Source 2: Binance large trade aggregation (free public endpoint)
-    try:
-        symbol_binance = coin_name.upper() + "USDT"
-        url2 = "https://api.binance.com/api/v3/aggTrades?symbol=" + symbol_binance + "&limit=20"
-        req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req2, timeout=6) as resp2:
-            trades = json.loads(resp2.read().decode())
-        if trades:
-            # Check for large individual trades
-            prices = [float(t["p"]) for t in trades]
-            qtys = [float(t["q"]) for t in trades]
-            avg_qty = sum(qtys) / len(qtys) if qtys else 0
-            max_qty = max(qtys) if qtys else 0
-            buys = sum(1 for t in trades if not t.get("m", True))
-            sells = sum(1 for t in trades if t.get("m", True))
-            if max_qty > avg_qty * 5:
-                alerts.append("🐋 Large single trade detected: " + str(round(max_qty, 2)) + " " + coin_name.upper() + " (" + str(round(max_qty/avg_qty, 1)) + "x avg size)")
-            buy_pct = round(buys / len(trades) * 100)
-            if buy_pct > 65:
-                alerts.append("🟢 Recent trades: " + str(buy_pct) + "% buys — buyers dominating")
-            elif buy_pct < 35:
-                alerts.append("🔴 Recent trades: " + str(100-buy_pct) + "% sells — sellers dominating")
-            print(coin_name.upper() + " Binance trades: buys=" + str(buy_pct) + "% max_qty=" + str(round(max_qty,2)))
-    except Exception as e:
-        print("Binance trades error: " + str(e))
 
-    # Source 3: Funding rate (signals leveraged position bias)
+    # Source 2: OKX Funding Rate (works on Railway, no geo-block)
     try:
-        url3 = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=" + coin_name.upper() + "USDT&limit=3"
-        req3 = urllib.request.Request(url3, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req3, timeout=6) as resp3:
-            rates = json.loads(resp3.read().decode())
-        if rates:
-            latest_rate = float(rates[-1]["fundingRate"]) * 100
-            rate_pct = round(latest_rate, 4)
+        coin_okx = coin_name.upper() + "-USDT-SWAP"
+        url_okx = "https://www.okx.com/api/v5/public/funding-rate?instId=" + coin_okx
+        req_okx = urllib.request.Request(url_okx, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_okx, timeout=6) as resp_okx:
+            data_okx = json.loads(resp_okx.read().decode())
+        if data_okx.get("data"):
+            rate = float(data_okx["data"][0]["fundingRate"]) * 100
+            rate_pct = round(rate, 4)
             if rate_pct > 0.05:
-                alerts.append("📉 Funding rate: +" + str(rate_pct) + "% — longs paying, crowded long trade")
+                alerts.append("📉 Funding rate: +" + str(rate_pct) + "% — лонги переплачивают, рынок перегрет")
             elif rate_pct < -0.02:
-                alerts.append("📈 Funding rate: " + str(rate_pct) + "% — shorts paying, possible short squeeze")
+                alerts.append("📈 Funding rate: " + str(rate_pct) + "% — шорты переплачивают, возможен шорт-сквиз")
             else:
-                alerts.append("⚖️ Funding rate: " + str(rate_pct) + "% — balanced leverage")
-            print(coin_name.upper() + " Funding rate: " + str(rate_pct) + "%")
+                alerts.append("⚖️ Funding rate: " + str(rate_pct) + "% — баланс лонгов и шортов")
+            print(coin_name.upper() + " OKX Funding: " + str(rate_pct) + "%")
     except Exception as e:
-        print("Funding rate error: " + str(e))
+        print("OKX funding error: " + str(e))
+
+    # Source 3: OKX Open Interest change
+    try:
+        url_oi = "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-history?instId=" + coin_okx + "&period=1H&limit=5"
+        req_oi = urllib.request.Request(url_oi, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_oi, timeout=6) as resp_oi:
+            data_oi = json.loads(resp_oi.read().decode())
+        if data_oi.get("data") and len(data_oi["data"]) >= 2:
+            oi_now = float(data_oi["data"][0][1])
+            oi_prev = float(data_oi["data"][-1][1])
+            oi_change = round((oi_now - oi_prev) / oi_prev * 100, 2) if oi_prev > 0 else 0
+            if oi_change > 5:
+                alerts.append("📊 Open Interest вырос на +" + str(oi_change) + "% — новые деньги входят в рынок")
+            elif oi_change < -5:
+                alerts.append("📊 Open Interest упал на " + str(oi_change) + "% — позиции закрываются, возможен разворот")
+            else:
+                alerts.append("📊 Open Interest: " + ("+" if oi_change > 0 else "") + str(oi_change) + "% — стабильно")
+            print(coin_name.upper() + " OI change: " + str(oi_change) + "%")
+    except Exception as e:
+        print("OKX OI error: " + str(e))
+
 
     if not alerts:
         print("Whale/onchain: no data available for " + coin_name)
