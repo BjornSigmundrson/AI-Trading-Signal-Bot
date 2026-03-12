@@ -327,6 +327,31 @@ async function loadAccuracy() {
   } catch(e) { console.error("Accuracy load error:", e); }
 }
 
+async function loadFearGreed() {
+  try {
+    const res = await fetch("https://api.alternative.me/fng/?limit=2");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.data || !data.data[0]) return;
+    const today = data.data[0];
+    const yesterday = data.data[1];
+    const value = parseInt(today.value);
+    const label = today.value_classification;
+    const change = value - parseInt(yesterday.value);
+    const col = fgColor(value);
+    const dir = change > 0 ? "↑" : change < 0 ? "↓" : "→";
+    const el = document.getElementById("fg-card");
+    if (el) {
+      el.textContent = value + "/100";
+      el.style.color = col;
+    }
+    const lbl = document.getElementById("fg-label");
+    if (lbl) {
+      lbl.textContent = label + " " + dir + Math.abs(change);
+    }
+  } catch(e) { console.error("FearGreed load error:", e); }
+}
+
 function colorForAcc(acc) {
   if (acc === null || acc === undefined) return "#556677";
   if (acc >= 65) return "#00cc88";
@@ -619,8 +644,10 @@ function renderHistory() {
 
 loadSignals();
 loadAccuracy();
+loadFearGreed();
 setInterval(loadSignals, 60000);
 setInterval(loadAccuracy, 300000);
+setInterval(loadFearGreed, 3600000);
 </script>
 </body>
 </html>"""
@@ -772,6 +799,9 @@ def status(coin="BTC"):
             "tf_4h": data.get("tf_4h"),
             "tf_1d": data.get("tf_1d"),
             "news": data.get("news", []),
+            "fear_greed": data.get("fear_greed"),
+            "liquidations": data.get("liquidations"),
+            "whale_alerts": data.get("whale_alerts", []),
             "updated": data.get("timestamp")
         })
     return jsonify({"status": "pending", "message": "Signal not ready yet"})
