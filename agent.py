@@ -452,7 +452,7 @@ def run_cycle(symbol):
         "",
         tf_summary(market["tf_1d"], "1D"),
         news_block,
-        "Reply ONLY with valid JSON:",
+        "Reply ONLY with a raw JSON object. NO markdown, NO code fences, NO explanation. Just the JSON:",
         '{"action":"HOLD","confidence":0.7,"stop_loss":0,"take_profit":0,"reason":"reason in Russian"}',
         "action: BUY, SELL or HOLD | confidence: 0.0-1.0 | stop_loss/take_profit: price levels",
     ]
@@ -460,9 +460,20 @@ def run_cycle(symbol):
 
     response = llm.invoke([{"role": "user", "content": prompt}])
     try:
-        decision = json.loads(response.content.strip())
-    except Exception:
-        decision = {"action": "HOLD", "confidence": 0.0, "stop_loss": 0, "take_profit": 0, "reason": "Parse error"}
+        raw = response.content.strip()
+        # Strip markdown code fences if present
+        if "```" in raw:
+            raw = raw.split("```")[-2] if raw.count("```") >= 2 else raw
+            raw = raw.replace("json", "", 1).strip()
+        # Find JSON object in response
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            raw = raw[start:end]
+        decision = json.loads(raw)
+    except Exception as e:
+        print("Parse error: " + str(e) + " | raw: " + str(response.content[:200]))
+        decision = {"action": "HOLD", "confidence": 0.0, "stop_loss": 0, "take_profit": 0, "reason": "Parse error: " + str(e)}
 
     result = {
         "symbol": symbol,
