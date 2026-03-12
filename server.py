@@ -98,19 +98,42 @@ def get_accuracy_stats():
             SELECT action,
                 COUNT(*) FILTER (WHERE result_24h = 'WIN') as wins,
                 COUNT(*) FILTER (WHERE result_24h = 'LOSS') as losses,
+                COUNT(*) FILTER (WHERE result_24h = 'NEUTRAL') as neutral,
                 COUNT(*) FILTER (WHERE result_24h IS NOT NULL) as total
             FROM signal_results
             GROUP BY action
         """)
         actions = {}
         for row in cur.fetchall():
-            act, wins, losses, total = row
+            act, wins, losses, neutral, total = row
             if total and total > 0:
                 acc = round((wins or 0) / total * 100, 1)
             else:
                 acc = None
-            actions[act] = {"wins": wins or 0, "losses": losses or 0, "total": total or 0, "accuracy": acc}
+            actions[act] = {"wins": wins or 0, "losses": losses or 0, "neutral": neutral or 0, "total": total or 0, "accuracy": acc}
         stats["by_action"] = actions
+
+        # Real accuracy = BUY + SELL only (excluding HOLD)
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE result_24h = 'WIN' AND action != 'HOLD') as wins,
+                COUNT(*) FILTER (WHERE result_24h = 'LOSS' AND action != 'HOLD') as losses,
+                COUNT(*) FILTER (WHERE result_24h IS NOT NULL AND action != 'HOLD') as total
+            FROM signal_results
+        """)
+        row = cur.fetchone()
+        wins, losses, total = row
+        if total and total > 0:
+            real_acc = round((wins or 0) / total * 100, 1)
+        else:
+            real_acc = None
+        stats["real_accuracy"] = {
+            "wins": wins or 0,
+            "losses": losses or 0,
+            "total": total or 0,
+            "accuracy": real_acc,
+            "note": "BUY+SELL only, excluding HOLD"
+        }
 
         # Recent results history (last 50)
         cur.execute("""
@@ -240,7 +263,8 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="card"><div class="label">SELL Signals</div><div class="value red" id="sell-count">—</div></div>
     <div class="card"><div class="label">HOLD Signals</div><div class="value yellow" id="hold-count">—</div></div>
     <div class="card"><div class="label">Price per Signal</div><div class="value blue">$0.10 USDC</div></div>
-    <div class="card"><div class="label">Accuracy 24h</div><div class="value purple" id="acc-24h">—</div></div>
+    <div class="card"><div class="label">Accuracy 24h</div><div class="value purple" id="acc-24h">—</div><div style="font-size:10px;color:#556677;margin-top:2px">incl. HOLD</div></div>
+    <div class="card"><div class="label">Real Accuracy</div><div class="value purple" id="acc-real">—</div><div style="font-size:10px;color:#556677;margin-top:2px" id="acc-real-sub">BUY+SELL only</div></div>
     <div class="card"><div class="label">Fear & Greed</div><div class="value" id="fg-card" style="font-size:20px">—</div><div id="fg-label" style="font-size:11px;color:#8899aa;margin-top:2px"></div></div>
   </div>
 
@@ -382,6 +406,16 @@ function renderAccuracy() {
   if (d24 && d24.accuracy !== null) {
     document.getElementById("acc-24h").textContent = d24.accuracy + "%";
     document.getElementById("acc-24h").style.color = colorForAcc(d24.accuracy);
+  }
+  // Real accuracy (BUY+SELL only)
+  const dReal = accuracyData["real_accuracy"];
+  if (dReal && dReal.accuracy !== null) {
+    const elR = document.getElementById("acc-real");
+    elR.textContent = dReal.accuracy + "%";
+    elR.style.color = colorForAcc(dReal.accuracy);
+    document.getElementById("acc-real-sub").textContent = dReal.wins + "W/" + dReal.losses + "L (" + dReal.total + " signals)";
+  } else {
+    document.getElementById("acc-real-sub").textContent = "нет BUY/SELL сигналов";
   }
 
   // Accuracy per period
