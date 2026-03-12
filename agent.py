@@ -375,65 +375,94 @@ def fetch_liquidations(symbol):
 
 
 def fetch_whale_alerts(coin):
-    """Parse Whale Alert RSS for large transfers related to this coin."""
+    """Fetch on-chain whale data from multiple free sources."""
     coin_name = coin.split("/")[0].lower()
     name_map = {
         "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
         "avax": "avalanche", "link": "chainlink", "doge": "dogecoin", "xrp": "ripple"
     }
-    keywords = [coin_name, name_map.get(coin_name, coin_name)]
+    full_name = name_map.get(coin_name, coin_name)
     alerts = []
-    # Try multiple Whale Alert RSS sources
-    whale_urls = [
-        "https://api.whale-alert.io/v1/transactions?api_key=free&min_value=500000&limit=10",
-        "https://feeds.feedburner.com/whale-alert",
-        "https://whale-alert.io/feed",
-    ]
-    for url in whale_urls:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                raw = resp.read()
-            # Try JSON first (whale-alert API)
-            try:
-                data = json.loads(raw.decode())
-                txs = data.get("transactions", [])
-                for tx in txs:
-                    sym = (tx.get("symbol") or "").lower()
-                    if sym in keywords:
-                        amount = tx.get("amount", 0)
-                        usd = tx.get("amount_usd", 0)
-                        from_owner = tx.get("from", {}).get("owner", "unknown")
-                        to_owner = tx.get("to", {}).get("owner", "unknown")
-                        alerts.append(str(int(amount)) + " " + sym.upper() +
-                            " ($" + str(int(usd/1e6)) + "M) " + from_owner + " → " + to_owner)
-                    if len(alerts) >= 3:
-                        break
-                if alerts:
-                    break
-            except Exception:
-                pass
-            # Try RSS/XML
-            try:
-                root = ET.fromstring(raw)
-                for item in root.iter("item"):
-                    title_el = item.find("title")
-                    if title_el is not None and title_el.text:
-                        title = title_el.text.strip()
-                        if any(kw in title.lower() for kw in keywords):
-                            alerts.append(title)
-                    if len(alerts) >= 5:
-                        break
-                if alerts:
-                    break
-            except Exception:
-                pass
-        except Exception as e:
-            print("Whale url error " + url[:40] + ": " + str(e))
-            continue
+
+    # Source 1: CoinGecko large holder stats (free, no key)
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/" + full_name + "?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+        md = data.get("market_data", {})
+        # Large holder proxy: compare volume to market cap
+        vol_24h = md.get("total_volume", {}).get("usd", 0)
+        mcap = md.get("market_cap", {}).get("usd", 1)
+        vol_ratio = round(vol_24h / mcap * 100, 1) if mcap else 0
+        price_change_7d = round(md.get("price_change_percentage_7d", 0), 1)
+        price_change_30d = round(md.get("price_change_percentage_30d", 0), 1)
+        circulating = md.get("circulating_supply", 0)
+        total = md.get("total_supply", 0)
+        supply_pct = round(circulating / total * 100, 1) if total else 0
+
+        if vol_ratio > 15:
+            alerts.append("⚡ Very high volume/mcap ratio: " + str(vol_ratio) + "% — unusual whale activity possible")
+        elif vol_ratio > 8:
+            alerts.append("📊 Elevated volume/mcap: " + str(vol_ratio) + "% — increased market activity")
+
+        alerts.append("📈 Price change: 7d=" + str(price_change_7d) + "% | 30d=" + str(price_change_30d) + "%")
+
+        if supply_pct < 80:
+            alerts.append("🔒 Only " + str(supply_pct) + "% of supply circulating — " + str(round(100-supply_pct, 1)) + "% locked/held")
+
+        print(coin_name.upper() + " CoinGecko: vol/mcap=" + str(vol_ratio) + "% 7d=" + str(price_change_7d) + "%")
+    except Exception as e:
+        print("CoinGecko whale proxy error: " + str(e))
+
+    # Source 2: Binance large trade aggregation (free public endpoint)
+    try:
+        symbol_binance = coin_name.upper() + "USDT"
+        url2 = "https://api.binance.com/api/v3/aggTrades?symbol=" + symbol_binance + "&limit=20"
+        req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req2, timeout=6) as resp2:
+            trades = json.loads(resp2.read().decode())
+        if trades:
+            # Check for large individual trades
+            prices = [float(t["p"]) for t in trades]
+            qtys = [float(t["q"]) for t in trades]
+            avg_qty = sum(qtys) / len(qtys) if qtys else 0
+            max_qty = max(qtys) if qtys else 0
+            buys = sum(1 for t in trades if not t.get("m", True))
+            sells = sum(1 for t in trades if t.get("m", True))
+            if max_qty > avg_qty * 5:
+                alerts.append("🐋 Large single trade detected: " + str(round(max_qty, 2)) + " " + coin_name.upper() + " (" + str(round(max_qty/avg_qty, 1)) + "x avg size)")
+            buy_pct = round(buys / len(trades) * 100)
+            if buy_pct > 65:
+                alerts.append("🟢 Recent trades: " + str(buy_pct) + "% buys — buyers dominating")
+            elif buy_pct < 35:
+                alerts.append("🔴 Recent trades: " + str(100-buy_pct) + "% sells — sellers dominating")
+            print(coin_name.upper() + " Binance trades: buys=" + str(buy_pct) + "% max_qty=" + str(round(max_qty,2)))
+    except Exception as e:
+        print("Binance trades error: " + str(e))
+
+    # Source 3: Funding rate (signals leveraged position bias)
+    try:
+        url3 = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=" + coin_name.upper() + "USDT&limit=3"
+        req3 = urllib.request.Request(url3, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req3, timeout=6) as resp3:
+            rates = json.loads(resp3.read().decode())
+        if rates:
+            latest_rate = float(rates[-1]["fundingRate"]) * 100
+            rate_pct = round(latest_rate, 4)
+            if rate_pct > 0.05:
+                alerts.append("📉 Funding rate: +" + str(rate_pct) + "% — longs paying, crowded long trade")
+            elif rate_pct < -0.02:
+                alerts.append("📈 Funding rate: " + str(rate_pct) + "% — shorts paying, possible short squeeze")
+            else:
+                alerts.append("⚖️ Funding rate: " + str(rate_pct) + "% — balanced leverage")
+            print(coin_name.upper() + " Funding rate: " + str(rate_pct) + "%")
+    except Exception as e:
+        print("Funding rate error: " + str(e))
+
     if not alerts:
-        print("Whale alert: no data available")
-    return alerts[:3]
+        print("Whale/onchain: no data available for " + coin_name)
+    return alerts[:4]
 
 
 
