@@ -70,7 +70,7 @@ def fetch_ohlcv_with_fallback(symbol, timeframe, limit=200):
 
 
 init_exchanges()
-llm = ChatAnthropic(model="claude-sonnet-4-6", temperature=0)
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0, max_tokens=600)
 
 
 def get_db():
@@ -613,6 +613,87 @@ def get_market_data(symbol):
     return result
 
 
+
+# Coin-specific thresholds
+COIN_PROFILES = {
+    "BTC": {
+        "rsi_buy_max": 63,    # BTC менее волатилен — строже порог
+        "rsi_sell_min": 67,
+        "stoch_overbought": 82,
+        "vol_warn": 0.4,      # BTC норма — низкий объём
+        "min_signals": 4,     # Требуем больше подтверждений
+        "description": "Blue chip — строгие пороги, нужно больше подтверждений"
+    },
+    "ETH": {
+        "rsi_buy_max": 64,
+        "rsi_sell_min": 66,
+        "stoch_overbought": 82,
+        "vol_warn": 0.4,
+        "min_signals": 4,
+        "description": "Blue chip — строгие пороги"
+    },
+    "SOL": {
+        "rsi_buy_max": 66,
+        "rsi_sell_min": 64,
+        "stoch_overbought": 80,
+        "vol_warn": 0.5,
+        "min_signals": 3,
+        "description": "Высокая бета — умеренные пороги"
+    },
+    "AVAX": {
+        "rsi_buy_max": 67,
+        "rsi_sell_min": 63,
+        "stoch_overbought": 78,
+        "vol_warn": 0.5,
+        "min_signals": 3,
+        "description": "Высокая бета — умеренные пороги"
+    },
+    "LINK": {
+        "rsi_buy_max": 67,
+        "rsi_sell_min": 63,
+        "stoch_overbought": 78,
+        "vol_warn": 0.5,
+        "min_signals": 3,
+        "description": "Высокая бета — умеренные пороги"
+    },
+    "DOGE": {
+        "rsi_buy_max": 70,    # Meme coin — очень волатилен, шире пороги
+        "rsi_sell_min": 60,
+        "stoch_overbought": 75,
+        "vol_warn": 0.6,      # Для DOGE нужен объём
+        "min_signals": 3,
+        "description": "Meme coin — широкие пороги, объём важен"
+    },
+    "XRP": {
+        "rsi_buy_max": 68,
+        "rsi_sell_min": 62,
+        "stoch_overbought": 78,
+        "vol_warn": 0.5,
+        "min_signals": 3,
+        "description": "Новостной актив — умеренные пороги"
+    },
+}
+
+def get_coin_profile(symbol):
+    coin = symbol.split("/")[0].upper()
+    return COIN_PROFILES.get(coin, {
+        "rsi_buy_max": 65, "rsi_sell_min": 65,
+        "stoch_overbought": 80, "vol_warn": 0.5,
+        "min_signals": 3, "description": "Default"
+    })
+
+def volume_confidence_penalty(tf_1h, tf_4h):
+    """Снижает confidence если объём низкий на обоих таймфреймах."""
+    vol_1h = tf_1h.get("vol_ratio", 1.0)
+    vol_4h = tf_4h.get("vol_ratio", 1.0)
+    if vol_1h < 0.3 and vol_4h < 0.5:
+        return -0.10  # Сильный штраф — оба TF без объёма
+    if vol_1h < 0.5 and vol_4h < 0.5:
+        return -0.07  # Умеренный штраф
+    if vol_1h < 0.5:
+        return -0.04  # Лёгкий штраф — только 1H
+    return 0.0        # Объём нормальный
+
 def tf_summary(tf_data, name):
     if not tf_data:
         return name + ": unavailable"
@@ -700,31 +781,39 @@ def run_cycle(symbol):
             + "  Large transfers TO exchange = possible selling pressure\n"
             + "  Large transfers FROM exchange = possible accumulation\n")
 
+    # Coin-specific profile and volume penalty
+    coin = symbol.split("/")[0].upper()
+    profile = get_coin_profile(symbol)
+    vol_penalty = volume_confidence_penalty(market["tf_1h"], market["tf_4h"])
+    if vol_penalty < 0:
+        print(coin + " volume penalty: " + str(vol_penalty) + " (1H=" + str(market["tf_1h"].get("vol_ratio","?")) + "x 4H=" + str(market["tf_4h"].get("vol_ratio","?")) + "x)")
+
     lines = [
         "You are an aggressive professional crypto trader. Your goal is to find ACTIONABLE signals.",
+        "COIN PROFILE for " + coin + ": " + profile["description"],
         "IMPORTANT RULES:",
         "1. Use 1H and 4H as PRIMARY signals. 1D is context only — do NOT let 1D alone block BUY/SELL.",
-        "2. BUY signal rules (need 3+ of these):",
+        "2. BUY signal rules (need " + str(profile["min_signals"]) + "+ of these):",
         "   - 1H trend UP or STRONG_UP",
         "   - 4H trend UP or STRONG_UP",
         "   - MACD bullish on 1H or 4H",
-        "   - RSI 1H between 40-65 (room to grow)",
+        "   - RSI 1H between 40-" + str(profile["rsi_buy_max"]) + " (room to grow, coin-specific)",
         "   - Price above EMA200 on 1H",
         "   - Funding rate negative or neutral (shorts paying = bullish)",
         "   - Fear & Greed < 30 (extreme fear = contrarian buy)",
-        "   - StochRSI 1H not overbought (<80)",
-        "3. SELL signal rules (need 3+ of these):",
+        "   - StochRSI 1H not overbought (< " + str(profile["stoch_overbought"]) + ", coin-specific)",
+        "3. SELL signal rules (need " + str(profile["min_signals"]) + "+ of these):",
         "   - 1H trend DOWN or STRONG_DOWN",
         "   - 4H trend DOWN or STRONG_DOWN",
         "   - MACD bearish on 1H or 4H",
-        "   - RSI 1H > 65",
+        "   - RSI 1H > " + str(profile["rsi_sell_min"]) + " (coin-specific)",
         "   - Price below EMA200 on 1H",
         "   - Funding rate very positive (>0.05%, longs paying = bearish)",
-        "   - StochRSI 1H overbought (>80)",
+        "   - StochRSI 1H overbought (> " + str(profile["stoch_overbought"]) + ", coin-specific)",
         "4. HOLD only when signals are truly mixed with NO clear edge.",
-        "5. Confidence: 0.7+ for strong signals, 0.6-0.7 for moderate. Never use HOLD with confidence > 0.7.",
-        "6. Volume LOW is a warning but NOT a reason to always HOLD.",
-        "7. Set stop_loss and take_profit at key support/resistance levels.",
+        "5. Confidence base: 0.65-0.75. Apply volume penalty: " + str(vol_penalty) + " (already calculated).",
+        "   Final confidence must be: base + " + str(vol_penalty) + ". If vol_ratio 1H=" + str(round(market["tf_1h"].get("vol_ratio",1),2)) + " and 4H=" + str(round(market["tf_4h"].get("vol_ratio",1),2)) + ".",
+        "6. Set stop_loss and take_profit at key support/resistance levels.",
         "",
         "SYMBOL: " + market["symbol"],
         "PRICE: $" + str(market["price"]),
@@ -739,7 +828,7 @@ def run_cycle(symbol):
         whale_block,
         news_block,
         "Count the BUY/SELL rules above carefully before deciding.",
-        "Reply ONLY with a raw JSON object. NO markdown, NO code fences, NO explanation. Just the JSON:",
+        "Reply ONLY with a raw JSON object. NO markdown, NO code fences. Keep reason under 100 words. Just the JSON:",
         '{"action":"HOLD","confidence":0.7,"stop_loss":0,"take_profit":0,"reason":"reason in Russian"}',
         "action: BUY, SELL or HOLD | confidence: 0.0-1.0 | stop_loss/take_profit: price levels",
     ]
@@ -858,6 +947,12 @@ if __name__ == "__main__":
             print("1H: RSI=" + str(tf1.get("rsi")) + " MACD=" + str(tf1.get("macd")) + " Trend=" + str(tf1.get("trend")))
             print("4H: RSI=" + str(tf4.get("rsi")) + " MACD=" + str(tf4.get("macd")) + " Trend=" + str(tf4.get("trend")))
             print("1D: RSI=" + str(tf1d.get("rsi")) + " MACD=" + str(tf1d.get("macd")) + " Trend=" + str(tf1d.get("trend")))
+            # Apply volume confidence penalty
+            if vol_penalty < 0 and signal.get("action") != "HOLD":
+                original_conf = signal.get("confidence", 0.7)
+                signal["confidence"] = round(max(0.50, original_conf + vol_penalty), 2)
+                print("Volume penalty " + str(vol_penalty) + ": " + str(original_conf) + " → " + str(signal["confidence"]))
+
             print("Signal: " + str(signal.get("action")) + " | Confidence: " + str(int(signal.get("confidence", 0) * 100)) + "%")
             print(str(signal.get("reason", "")))
             save_signal(symbol, signal)
