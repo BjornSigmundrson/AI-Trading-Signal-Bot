@@ -315,17 +315,29 @@ STATS_HTML = """<!DOCTYPE html>
   </div>
   <h3 style="color:#aabbcc;margin:16px 0 8px">Открытые сделки</h3>
   <div style="overflow-x:auto">
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
+  <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
     <thead><tr style="color:#556677;border-bottom:1px solid #1e3a5f">
-      <th style="text-align:left;padding:6px">Монета</th><th>Тип</th><th>Вход</th><th>SL</th><th>TP</th><th>P&L $</th><th>P&L %</th>
+      <th style="text-align:left;padding:8px;width:12%">Монета</th>
+      <th style="text-align:center;width:8%">Тип</th>
+      <th style="text-align:right;padding:8px;width:16%">Вход</th>
+      <th style="text-align:right;padding:8px;width:16%">SL</th>
+      <th style="text-align:right;padding:8px;width:16%">TP</th>
+      <th style="text-align:right;padding:8px;width:16%">P&L $</th>
+      <th style="text-align:right;padding:8px;width:16%">P&L %</th>
     </tr></thead>
     <tbody id="paper-open-tbody"><tr><td colspan="7" style="color:#556677;text-align:center;padding:12px">Нет открытых сделок</td></tr></tbody>
   </table></div>
   <h3 style="color:#aabbcc;margin:20px 0 8px">История сделок</h3>
   <div style="overflow-x:auto">
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
+  <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
     <thead><tr style="color:#556677;border-bottom:1px solid #1e3a5f">
-      <th style="text-align:left;padding:6px">Монета</th><th>Тип</th><th>Вход</th><th>Выход</th><th>Причина</th><th>P&L $</th><th>P&L %</th>
+      <th style="text-align:left;padding:8px;width:12%">Монета</th>
+      <th style="text-align:center;width:8%">Тип</th>
+      <th style="text-align:right;padding:8px;width:14%">Вход</th>
+      <th style="text-align:right;padding:8px;width:14%">Выход</th>
+      <th style="text-align:center;padding:8px;width:18%">Причина</th>
+      <th style="text-align:right;padding:8px;width:17%">P&L $</th>
+      <th style="text-align:right;padding:8px;width:17%">P&L %</th>
     </tr></thead>
     <tbody id="paper-closed-tbody"><tr><td colspan="7" style="color:#556677;text-align:center;padding:12px">Нет закрытых сделок</td></tr></tbody>
   </table></div>
@@ -379,6 +391,14 @@ async function loadAccuracy() {
   } catch(e) { console.error("Accuracy load error:", e); }
 }
 
+function fmtPrice(v) {
+  var n = Number(v);
+  if (!n) return "0";
+  if (n >= 1000) return n.toFixed(2);
+  if (n >= 1) return n.toFixed(4);
+  return n.toFixed(5);
+}
+
 async function loadPaper() {
   try {
     const res = await fetch(API + "/paper");
@@ -412,13 +432,13 @@ async function loadPaper() {
       openTbody.innerHTML = d.open_trades.map(t => {
         const pnlCol = t.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
         return "<tr style='border-bottom:1px solid #0d1f36'>" +
-          "<td style='padding:6px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
+          "<td style='padding:8px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
           "<td style='color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center'>" + t.action + "</td>" +
-          "<td style='text-align:right'>$" + Number(t.entry_price).toLocaleString() + "</td>" +
-          "<td style='text-align:right;color:#ff4466'>$" + Number(t.stop_loss).toLocaleString() + "</td>" +
-          "<td style='text-align:right;color:#00cc88'>$" + Number(t.take_profit).toLocaleString() + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + t.pnl_usd + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + t.pnl_pct + "%</td>" +
+          "<td style='text-align:right'>$" + fmtPrice(t.entry_price) + "</td>" +
+          "<td style='text-align:right;color:#ff4466'>$" + fmtPrice(t.stop_loss) + "</td>" +
+          "<td style='text-align:right;color:#00cc88'>$" + fmtPrice(t.take_profit) + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + Number(t.pnl_pct).toFixed(2) + "%</td>" +
         "</tr>";
       }).join("");
     } else {
@@ -432,13 +452,13 @@ async function loadPaper() {
         const pnlCol = t.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
         const reasonCol = t.exit_reason === "TAKE_PROFIT" ? "#00cc88" : "#ff4466";
         return "<tr style='border-bottom:1px solid #0d1f36'>" +
-          "<td style='padding:6px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
+          "<td style='padding:8px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
           "<td style='color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center'>" + t.action + "</td>" +
-          "<td style='text-align:right'>$" + Number(t.entry).toLocaleString() + "</td>" +
-          "<td style='text-align:right'>$" + Number(t.exit).toLocaleString() + "</td>" +
+          "<td style='text-align:right'>$" + fmtPrice(t.entry) + "</td>" +
+          "<td style='text-align:right'>$" + fmtPrice(t.exit) + "</td>" +
           "<td style='text-align:center;color:" + reasonCol + ";font-size:11px'>" + (t.exit_reason||"—") + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + t.pnl_usd + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + t.pnl_pct + "%</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + Number(t.pnl_pct).toFixed(2) + "%</td>" +
         "</tr>";
       }).join("");
     } else {

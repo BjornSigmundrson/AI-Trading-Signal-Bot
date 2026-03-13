@@ -70,7 +70,7 @@ def fetch_ohlcv_with_fallback(symbol, timeframe, limit=200):
 
 
 init_exchanges()
-llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0, max_tokens=600)
+llm = ChatAnthropic(model="claude-sonnet-4-6", temperature=0, max_tokens=800)
 
 
 def get_db():
