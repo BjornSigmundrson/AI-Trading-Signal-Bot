@@ -1244,17 +1244,22 @@ if __name__ == "__main__":
             print("Results check error: " + str(e))
 
         # Check open paper trades
-        current_prices = {}
-        for sym in SYMBOLS:
-            try:
-                coin = sym.split("/")[0]
-                ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
-                if ohlcv:
-                    current_prices[coin] = ohlcv[-1][4]
-            except:
-                pass
-        if current_prices:
-            paper_check_open_trades(conn, current_prices)
+        try:
+            conn = get_db()
+            current_prices = {}
+            for sym in SYMBOLS:
+                try:
+                    coin = sym.split("/")[0]
+                    ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
+                    if ohlcv:
+                        current_prices[coin] = ohlcv[-1][4]
+                except:
+                    pass
+            if current_prices:
+                paper_check_open_trades(conn, current_prices)
+            conn.close()
+        except Exception as e:
+            print("Paper check error: " + str(e))
 
         # Run new signals
         for symbol in SYMBOLS:
@@ -1282,8 +1287,13 @@ if __name__ == "__main__":
                 sl = signal.get("stop_loss", 0)
                 tp = signal.get("take_profit", 0)
                 if sl and tp and sl > 0 and tp > 0:
-                    paper_open_trade(conn, symbol, signal["action"],
-                                     signal.get("price", 0), sl, tp,
-                                     signal.get("confidence", 0.7))
+                    try:
+                        pconn = get_db()
+                        paper_open_trade(pconn, symbol, signal["action"],
+                                         signal.get("price", 0), sl, tp,
+                                         signal.get("confidence", 0.7))
+                        pconn.close()
+                    except Exception as pe:
+                        print("Paper open error: " + str(pe))
 
         wait_until_next_hour()
