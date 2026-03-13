@@ -100,6 +100,40 @@ def init_db():
         pass
     # results table
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(20),
+            action VARCHAR(10),
+            entry_price FLOAT,
+            stop_loss FLOAT,
+            take_profit FLOAT,
+            confidence FLOAT,
+            size_usd FLOAT DEFAULT 100,
+            status VARCHAR(10) DEFAULT 'OPEN',
+            exit_price FLOAT,
+            pnl_usd FLOAT,
+            pnl_pct FLOAT,
+            exit_reason VARCHAR(20),
+            opened_at TIMESTAMP DEFAULT NOW(),
+            closed_at TIMESTAMP
+        )
+    """)
+    conn.commit()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS paper_portfolio (
+            id SERIAL PRIMARY KEY,
+            balance FLOAT DEFAULT 1000,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    # Init portfolio with $1000 if empty
+    cur.execute("SELECT COUNT(*) FROM paper_portfolio")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO paper_portfolio (balance) VALUES (1000)")
+    conn.commit()
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS signal_results (
             id SERIAL PRIMARY KEY,
             signal_id INTEGER REFERENCES signals(id),
@@ -858,6 +892,98 @@ def tf_summary(tf_data, name):
     return "\n".join(lines)
 
 
+
+PAPER_TRADE_SIZE = 100  # $100 на каждую сделку
+PAPER_INITIAL_BALANCE = 1000  # Стартовый баланс $1000
+
+def paper_check_open_trades(conn, current_prices):
+    """Проверяет открытые сделки — закрывает по SL/TP или обновляет P&L."""
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, symbol, action, entry_price, stop_loss, take_profit, size_usd FROM paper_trades WHERE status='OPEN'")
+        trades = cur.fetchall()
+
+        for trade in trades:
+            tid, symbol, action, entry, sl, tp, size = trade
+            coin = symbol.split("/")[0]
+            price = current_prices.get(coin)
+            if not price:
+                continue
+
+            pnl_pct = 0
+            exit_reason = None
+
+            if action == "BUY":
+                pnl_pct = (price - entry) / entry * 100
+                if sl and price <= sl:
+                    exit_reason = "STOP_LOSS"
+                elif tp and price >= tp:
+                    exit_reason = "TAKE_PROFIT"
+            elif action == "SELL":
+                pnl_pct = (entry - price) / entry * 100
+                if sl and price >= sl:
+                    exit_reason = "STOP_LOSS"
+                elif tp and price <= tp:
+                    exit_reason = "TAKE_PROFIT"
+
+            pnl_usd = round(size * pnl_pct / 100, 2)
+
+            if exit_reason:
+                cur.execute("""
+                    UPDATE paper_trades
+                    SET status='CLOSED', exit_price=%s, pnl_usd=%s, pnl_pct=%s,
+                        exit_reason=%s, closed_at=NOW()
+                    WHERE id=%s
+                """, (price, pnl_usd, round(pnl_pct, 2), exit_reason, tid))
+                # Update portfolio balance
+                cur.execute("UPDATE paper_portfolio SET balance = balance + %s, updated_at=NOW()", (pnl_usd,))
+                conn.commit()
+                print("Paper trade CLOSED: " + symbol + " " + action + " " + exit_reason + " P&L: $" + str(pnl_usd) + " (" + str(round(pnl_pct,2)) + "%)")
+            else:
+                # Just update unrealized P&L
+                cur.execute("""
+                    UPDATE paper_trades SET pnl_usd=%s, pnl_pct=%s WHERE id=%s
+                """, (pnl_usd, round(pnl_pct, 2), tid))
+                conn.commit()
+
+        cur.close()
+    except Exception as e:
+        print("Paper check error: " + str(e))
+
+
+def paper_open_trade(conn, symbol, action, price, stop_loss, take_profit, confidence):
+    """Открывает новую бумажную сделку если нет уже открытой по этой монете."""
+    try:
+        cur = conn.cursor()
+
+        # Проверяем нет ли уже открытой сделки по этой монете
+        cur.execute("SELECT id FROM paper_trades WHERE symbol=%s AND status='OPEN'", (symbol,))
+        if cur.fetchone():
+            print("Paper trade: уже есть открытая сделка по " + symbol + " — пропускаем")
+            cur.close()
+            return
+
+        # Проверяем баланс
+        cur.execute("SELECT balance FROM paper_portfolio ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        balance = row[0] if row else PAPER_INITIAL_BALANCE
+        if balance < PAPER_TRADE_SIZE:
+            print("Paper trade: недостаточно баланса ($" + str(round(balance,2)) + ")")
+            cur.close()
+            return
+
+        # Открываем сделку
+        cur.execute("""
+            INSERT INTO paper_trades (symbol, action, entry_price, stop_loss, take_profit, confidence, size_usd)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (symbol, action, price, stop_loss, take_profit, confidence, PAPER_TRADE_SIZE))
+        conn.commit()
+        cur.close()
+        print("Paper trade OPENED: " + symbol + " " + action + " @ $" + str(price) +
+              " SL=$" + str(stop_loss) + " TP=$" + str(take_profit))
+    except Exception as e:
+        print("Paper open error: " + str(e))
+
 def run_cycle(symbol):
     try:
         market = get_market_data(symbol)
@@ -1117,6 +1243,19 @@ if __name__ == "__main__":
         except Exception as e:
             print("Results check error: " + str(e))
 
+        # Check open paper trades
+        current_prices = {}
+        for sym in SYMBOLS:
+            try:
+                coin = sym.split("/")[0]
+                ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
+                if ohlcv:
+                    current_prices[coin] = ohlcv[-1][4]
+            except:
+                pass
+        if current_prices:
+            paper_check_open_trades(conn, current_prices)
+
         # Run new signals
         for symbol in SYMBOLS:
             print("\n--- " + symbol + " ---")
@@ -1137,5 +1276,14 @@ if __name__ == "__main__":
             print("Signal: " + str(signal.get("action")) + " | Confidence: " + str(int(signal.get("confidence", 0) * 100)) + "%")
             print(str(signal.get("reason", "")))
             save_signal(symbol, signal)
+
+            # Paper trading — открываем сделку при BUY/SELL
+            if signal.get("action") in ("BUY", "SELL"):
+                sl = signal.get("stop_loss", 0)
+                tp = signal.get("take_profit", 0)
+                if sl and tp and sl > 0 and tp > 0:
+                    paper_open_trade(conn, symbol, signal["action"],
+                                     signal.get("price", 0), sl, tp,
+                                     signal.get("confidence", 0.7))
 
         wait_until_next_hour()

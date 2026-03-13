@@ -298,6 +298,7 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="tabs">
       <div class="tab active" onclick="switchTab('signals')">All Signals</div>
       <div class="tab" onclick="switchTab('results')">Forecast Results</div>
+      <div class="tab" onclick="switchTab('paper')">💰 Paper Trading</div>
     </div>
     <div id="tab-signals">
       <table>
@@ -305,7 +306,32 @@ STATS_HTML = """<!DOCTYPE html>
         <tbody id="history-table"><tr><td colspan="8" style="color:#8899aa">Loading...</td></tr></tbody>
       </table>
     </div>
-    <div id="tab-results" style="display:none">
+    <div id="tab-paper" style="display:none">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">
+    <div class="card"><div class="label">Баланс</div><div class="value" id="paper-balance">—</div><div style="font-size:11px;color:#556677">старт $1000</div></div>
+    <div class="card"><div class="label">P&L</div><div class="value" id="paper-pnl">—</div><div style="font-size:11px;color:#556677" id="paper-pnl-pct">—</div></div>
+    <div class="card"><div class="label">Win Rate</div><div class="value purple" id="paper-winrate">—</div><div style="font-size:11px;color:#556677" id="paper-wl">—</div></div>
+    <div class="card"><div class="label">Открытых</div><div class="value" id="paper-open-count">—</div><div style="font-size:11px;color:#556677">сделок</div></div>
+  </div>
+  <h3 style="color:#aabbcc;margin:16px 0 8px">Открытые сделки</h3>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="color:#556677;border-bottom:1px solid #1e3a5f">
+      <th style="text-align:left;padding:6px">Монета</th><th>Тип</th><th>Вход</th><th>SL</th><th>TP</th><th>P&L $</th><th>P&L %</th>
+    </tr></thead>
+    <tbody id="paper-open-tbody"><tr><td colspan="7" style="color:#556677;text-align:center;padding:12px">Нет открытых сделок</td></tr></tbody>
+  </table></div>
+  <h3 style="color:#aabbcc;margin:20px 0 8px">История сделок</h3>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="color:#556677;border-bottom:1px solid #1e3a5f">
+      <th style="text-align:left;padding:6px">Монета</th><th>Тип</th><th>Вход</th><th>Выход</th><th>Причина</th><th>P&L $</th><th>P&L %</th>
+    </tr></thead>
+    <tbody id="paper-closed-tbody"><tr><td colspan="7" style="color:#556677;text-align:center;padding:12px">Нет закрытых сделок</td></tr></tbody>
+  </table></div>
+</div>
+
+<div id="tab-results" style="display:none">
       <table>
         <thead><tr><th>Pair</th><th>Action</th><th>Entry Price</th><th>Change</th><th>Result 1h</th><th>Result 4h</th><th>Result 24h</th><th>Time</th></tr></thead>
         <tbody id="results-table"><tr><td colspan="7" style="color:#8899aa">Loading...</td></tr></tbody>
@@ -336,6 +362,8 @@ let accuracyData = null;
 function switchTab(tab) {
   document.getElementById("tab-signals").style.display = tab === "signals" ? "block" : "none";
   document.getElementById("tab-results").style.display = tab === "results" ? "block" : "none";
+  document.getElementById("tab-paper").style.display = tab === "paper" ? "block" : "none";
+  if (tab === "paper") loadPaper();
   document.querySelectorAll(".tab").forEach((t, i) => {
     t.classList.toggle("active", (i === 0 && tab === "signals") || (i === 1 && tab === "results"));
   });
@@ -349,6 +377,74 @@ async function loadAccuracy() {
     renderAccuracy();
     renderResultsTable();
   } catch(e) { console.error("Accuracy load error:", e); }
+}
+
+async function loadPaper() {
+  try {
+    const res = await fetch(API + "/paper");
+    if (!res.ok) return;
+    const d = await res.json();
+
+    // Summary cards
+    const balEl = document.getElementById("paper-balance");
+    balEl.textContent = "$" + d.balance.toFixed(2);
+    balEl.style.color = d.balance >= 1000 ? "#00cc88" : "#ff4466";
+
+    const pnlEl = document.getElementById("paper-pnl");
+    pnlEl.textContent = (d.pnl_usd >= 0 ? "+" : "") + "$" + d.pnl_usd.toFixed(2);
+    pnlEl.style.color = d.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
+    document.getElementById("paper-pnl-pct").textContent = (d.pnl_pct >= 0 ? "+" : "") + d.pnl_pct + "%";
+
+    if (d.win_rate !== null) {
+      const wr = document.getElementById("paper-winrate");
+      wr.textContent = d.win_rate + "%";
+      wr.style.color = d.win_rate >= 55 ? "#00cc88" : d.win_rate >= 45 ? "#ffcc00" : "#ff4466";
+      document.getElementById("paper-wl").textContent = d.wins + "W / " + d.losses + "L";
+    } else {
+      document.getElementById("paper-winrate").textContent = "—";
+      document.getElementById("paper-wl").textContent = "нет сделок";
+    }
+    document.getElementById("paper-open-count").textContent = d.open_trades.length;
+
+    // Open trades
+    const openTbody = document.getElementById("paper-open-tbody");
+    if (d.open_trades.length) {
+      openTbody.innerHTML = d.open_trades.map(t => {
+        const pnlCol = t.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
+        return "<tr style='border-bottom:1px solid #0d1f36'>" +
+          "<td style='padding:6px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
+          "<td style='color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center'>" + t.action + "</td>" +
+          "<td style='text-align:right'>$" + Number(t.entry_price).toLocaleString() + "</td>" +
+          "<td style='text-align:right;color:#ff4466'>$" + Number(t.stop_loss).toLocaleString() + "</td>" +
+          "<td style='text-align:right;color:#00cc88'>$" + Number(t.take_profit).toLocaleString() + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + t.pnl_usd + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + t.pnl_pct + "%</td>" +
+        "</tr>";
+      }).join("");
+    } else {
+      openTbody.innerHTML = "<tr><td colspan='7' style='color:#556677;text-align:center;padding:12px'>Нет открытых сделок</td></tr>";
+    }
+
+    // Closed trades
+    const closedTbody = document.getElementById("paper-closed-tbody");
+    if (d.closed_trades.length) {
+      closedTbody.innerHTML = d.closed_trades.map(t => {
+        const pnlCol = t.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
+        const reasonCol = t.exit_reason === "TAKE_PROFIT" ? "#00cc88" : "#ff4466";
+        return "<tr style='border-bottom:1px solid #0d1f36'>" +
+          "<td style='padding:6px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
+          "<td style='color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center'>" + t.action + "</td>" +
+          "<td style='text-align:right'>$" + Number(t.entry).toLocaleString() + "</td>" +
+          "<td style='text-align:right'>$" + Number(t.exit).toLocaleString() + "</td>" +
+          "<td style='text-align:center;color:" + reasonCol + ";font-size:11px'>" + (t.exit_reason||"—") + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + t.pnl_usd + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + t.pnl_pct + "%</td>" +
+        "</tr>";
+      }).join("");
+    } else {
+      closedTbody.innerHTML = "<tr><td colspan='7' style='color:#556677;text-align:center;padding:12px'>Нет закрытых сделок</td></tr>";
+    }
+  } catch(e) { console.error("Paper load error:", e); }
 }
 
 async function loadFearGreed() {
@@ -808,6 +904,80 @@ def index():
 def stats():
     return render_template_string(STATS_HTML)
 
+
+@app.route("/paper")
+def paper_stats():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Portfolio balance
+        cur.execute("SELECT balance FROM paper_portfolio ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        balance = round(row[0], 2) if row else 1000.0
+        pnl_total = round(balance - 1000, 2)
+        pnl_pct = round(pnl_total / 1000 * 100, 2)
+
+        # Open trades
+        cur.execute("""
+            SELECT symbol, action, entry_price, stop_loss, take_profit,
+                   confidence, size_usd, pnl_usd, pnl_pct, opened_at
+            FROM paper_trades WHERE status='OPEN'
+            ORDER BY opened_at DESC
+        """)
+        open_trades = []
+        for r in cur.fetchall():
+            open_trades.append({
+                "symbol": r[0], "action": r[1], "entry_price": r[2],
+                "stop_loss": r[3], "take_profit": r[4], "confidence": r[5],
+                "size_usd": r[6], "pnl_usd": round(r[7] or 0, 2),
+                "pnl_pct": round(r[8] or 0, 2),
+                "opened_at": str(r[9])
+            })
+
+        # Closed trades
+        cur.execute("""
+            SELECT symbol, action, entry_price, exit_price, pnl_usd, pnl_pct,
+                   exit_reason, opened_at, closed_at
+            FROM paper_trades WHERE status='CLOSED'
+            ORDER BY closed_at DESC LIMIT 50
+        """)
+        closed_trades = []
+        for r in cur.fetchall():
+            closed_trades.append({
+                "symbol": r[0], "action": r[1], "entry": r[2], "exit": r[3],
+                "pnl_usd": round(r[4] or 0, 2), "pnl_pct": round(r[5] or 0, 2),
+                "exit_reason": r[6], "opened_at": str(r[7]), "closed_at": str(r[8])
+            })
+
+        # Win rate
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE pnl_usd > 0) as wins,
+                COUNT(*) FILTER (WHERE pnl_usd <= 0) as losses,
+                COUNT(*) as total,
+                SUM(pnl_usd) as total_pnl
+            FROM paper_trades WHERE status='CLOSED'
+        """)
+        r = cur.fetchone()
+        wins, losses, total, total_pnl = r[0] or 0, r[1] or 0, r[2] or 0, r[3] or 0
+        win_rate = round(wins / total * 100, 1) if total > 0 else None
+
+        cur.close()
+        return jsonify({
+            "balance": balance,
+            "initial": 1000,
+            "pnl_usd": pnl_total,
+            "pnl_pct": pnl_pct,
+            "win_rate": win_rate,
+            "wins": wins,
+            "losses": losses,
+            "total_trades": total,
+            "open_trades": open_trades,
+            "closed_trades": closed_trades
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/accuracy")
 def accuracy():
