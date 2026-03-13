@@ -1273,6 +1273,9 @@ if __name__ == "__main__":
             print("4H: RSI=" + str(tf4.get("rsi")) + " MACD=" + str(tf4.get("macd")) + " Trend=" + str(tf4.get("trend")))
             print("1D: RSI=" + str(tf1d.get("rsi")) + " MACD=" + str(tf1d.get("macd")) + " Trend=" + str(tf1d.get("trend")))
             # Apply volume confidence penalty
+            vol_penalty = volume_confidence_penalty(
+                signal.get("tf_1h") or {}, signal.get("tf_4h") or {}
+            )
             if vol_penalty < 0 and signal.get("action") != "HOLD":
                 original_conf = signal.get("confidence", 0.7)
                 signal["confidence"] = round(max(0.50, original_conf + vol_penalty), 2)
@@ -1286,14 +1289,25 @@ if __name__ == "__main__":
             if signal.get("action") in ("BUY", "SELL"):
                 sl = signal.get("stop_loss", 0)
                 tp = signal.get("take_profit", 0)
-                if sl and tp and sl > 0 and tp > 0:
+                price = signal.get("price", 0)
+                print("Paper debug: action=" + str(signal.get("action")) +
+                      " sl=" + str(sl) + " tp=" + str(tp) + " price=" + str(price))
+                if not sl or not tp or sl <= 0 or tp <= 0:
+                    # Try to set SL/TP from support/resistance if missing
+                    tf1h = signal.get("tf_1h") or {}
+                    sl = sl or tf1h.get("support", 0)
+                    tp = tp or tf1h.get("resistance", 0)
+                    print("Paper debug: using S/R fallback sl=" + str(sl) + " tp=" + str(tp))
+                if sl and tp and sl > 0 and tp > 0 and price > 0:
                     try:
                         pconn = get_db()
                         paper_open_trade(pconn, symbol, signal["action"],
-                                         signal.get("price", 0), sl, tp,
+                                         price, sl, tp,
                                          signal.get("confidence", 0.7))
                         pconn.close()
                     except Exception as pe:
                         print("Paper open error: " + str(pe))
+                else:
+                    print("Paper trade SKIPPED: invalid sl/tp/price")
 
         wait_until_next_hour()
