@@ -590,26 +590,174 @@ def analyze_timeframe(df):
     }
 
 
+
+def detect_rsi_divergence(df, periods=14, lookback=20):
+    """
+    Определяет дивергенцию RSI:
+    - Bearish: цена делает новый максимум, RSI нет → сигнал разворота вниз
+    - Bullish: цена делает новый минимум, RSI нет → сигнал разворота вверх
+    Возвращает dict с типом дивергенции и силой.
+    """
+    try:
+        if len(df) < lookback + periods:
+            return {"type": "NONE", "strength": 0}
+
+        closes = df["close"].values[-lookback:]
+        # RSI через pandas
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(periods).mean()
+        loss = (-delta.clip(upper=0)).rolling(periods).mean()
+        rs = gain / loss.replace(0, 1e-10)
+        rsi_series = (100 - 100 / (1 + rs)).values[-lookback:]
+
+        # Найдём последние 2 локальных максимума цены
+        price_highs = []
+        rsi_highs = []
+        price_lows = []
+        rsi_lows = []
+
+        for i in range(2, len(closes) - 1):
+            if closes[i] > closes[i-1] and closes[i] > closes[i+1]:
+                price_highs.append((i, closes[i]))
+                rsi_highs.append((i, rsi_series[i]))
+            if closes[i] < closes[i-1] and closes[i] < closes[i+1]:
+                price_lows.append((i, closes[i]))
+                rsi_lows.append((i, rsi_series[i]))
+
+        result = {"type": "NONE", "strength": 0, "description": ""}
+
+        # Bearish divergence: цена растёт, RSI падает
+        if len(price_highs) >= 2 and len(rsi_highs) >= 2:
+            ph1, ph2 = price_highs[-2], price_highs[-1]
+            rh1, rh2 = rsi_highs[-2], rsi_highs[-1]
+            if ph2[1] > ph1[1] and rh2[1] < rh1[1]:
+                strength = round((ph2[1] - ph1[1]) / ph1[1] * 100, 2)
+                rsi_drop = round(rh1[1] - rh2[1], 1)
+                result = {
+                    "type": "BEARISH",
+                    "strength": min(strength, 5.0),
+                    "description": "⚠️ Медвежья дивергенция RSI: цена ↑" + str(strength) + "% но RSI ↓" + str(rsi_drop) + "п — истощение роста"
+                }
+
+        # Bullish divergence: цена падает, RSI растёт
+        if len(price_lows) >= 2 and len(rsi_lows) >= 2:
+            pl1, pl2 = price_lows[-2], price_lows[-1]
+            rl1, rl2 = rsi_lows[-2], rsi_lows[-1]
+            if pl2[1] < pl1[1] and rl2[1] > rl1[1]:
+                strength = round((pl1[1] - pl2[1]) / pl1[1] * 100, 2)
+                rsi_rise = round(rl2[1] - rl1[1], 1)
+                result = {
+                    "type": "BULLISH",
+                    "strength": min(strength, 5.0),
+                    "description": "✅ Бычья дивергенция RSI: цена ↓" + str(strength) + "% но RSI ↑" + str(rsi_rise) + "п — скрытая сила"
+                }
+
+        return result
+    except Exception as e:
+        return {"type": "NONE", "strength": 0, "description": ""}
+
+
+def find_volume_levels(df, n_levels=3, min_vol_multiplier=1.5):
+    """
+    Находит уровни поддержки/сопротивления по объёму.
+    Реальные S/R — там где исторически был высокий объём.
+    Возвращает список уровней с объёмом и типом.
+    """
+    try:
+        if len(df) < 20:
+            return []
+
+        avg_vol = df["vol"].mean()
+        if avg_vol == 0:
+            return []
+
+        # Фильтруем свечи с высоким объёмом
+        high_vol = df[df["vol"] > avg_vol * min_vol_multiplier].copy()
+        if len(high_vol) < 3:
+            return []
+
+        current_price = df["close"].iloc[-1]
+        levels = []
+
+        for _, row in high_vol.iterrows():
+            # Средняя цена свечи с высоким объёмом = значимый уровень
+            level_price = (row["high"] + row["low"]) / 2
+            vol_ratio = round(row["vol"] / avg_vol, 1)
+
+            level_type = "RESISTANCE" if level_price > current_price else "SUPPORT"
+            levels.append({
+                "price": round(level_price, 6),
+                "vol_ratio": vol_ratio,
+                "type": level_type
+            })
+
+        # Кластеризуем близкие уровни (в пределах 0.5%)
+        clustered = []
+        used = set()
+        levels_sorted = sorted(levels, key=lambda x: x["price"])
+
+        for i, lvl in enumerate(levels_sorted):
+            if i in used:
+                continue
+            cluster = [lvl]
+            for j, other in enumerate(levels_sorted):
+                if j != i and j not in used:
+                    if abs(other["price"] - lvl["price"]) / lvl["price"] < 0.005:
+                        cluster.append(other)
+                        used.add(j)
+            used.add(i)
+            # Берём уровень с максимальным объёмом в кластере
+            best = max(cluster, key=lambda x: x["vol_ratio"])
+            clustered.append(best)
+
+        # Сортируем по объёму и берём топ N
+        clustered.sort(key=lambda x: x["vol_ratio"], reverse=True)
+        top = clustered[:n_levels * 2]
+
+        # Разделяем на support и resistance
+        supports = sorted([l for l in top if l["type"] == "SUPPORT"],
+                         key=lambda x: x["price"], reverse=True)[:n_levels]
+        resistances = sorted([l for l in top if l["type"] == "RESISTANCE"],
+                            key=lambda x: x["price"])[:n_levels]
+
+        return supports + resistances
+
+    except Exception as e:
+        return []
+
 def get_market_data(symbol):
     result = {"symbol": symbol}
     ohlcv_1h = fetch_ohlcv_with_fallback(symbol, "1h", limit=200)
     df_1h = pd.DataFrame(ohlcv_1h, columns=["ts", "open", "high", "low", "close", "vol"])
     result["tf_1h"] = analyze_timeframe(df_1h)
     result["price"] = result["tf_1h"]["price"]
+
+    # RSI divergence on 1H
+    result["divergence_1h"] = detect_rsi_divergence(df_1h)
+
+    # Volume-based S/R on 1H
+    result["vol_levels_1h"] = find_volume_levels(df_1h, n_levels=3)
+
     try:
         ohlcv_4h = fetch_ohlcv_with_fallback(symbol, "4h", limit=200)
         df_4h = pd.DataFrame(ohlcv_4h, columns=["ts", "open", "high", "low", "close", "vol"])
         result["tf_4h"] = analyze_timeframe(df_4h)
+        result["divergence_4h"] = detect_rsi_divergence(df_4h)
+        result["vol_levels_4h"] = find_volume_levels(df_4h, n_levels=2)
     except Exception as e:
         print("4h error: " + str(e))
         result["tf_4h"] = None
+        result["divergence_4h"] = {"type": "NONE"}
+        result["vol_levels_4h"] = []
     try:
         ohlcv_1d = fetch_ohlcv_with_fallback(symbol, "1d", limit=200)
         df_1d = pd.DataFrame(ohlcv_1d, columns=["ts", "open", "high", "low", "close", "vol"])
         result["tf_1d"] = analyze_timeframe(df_1d)
+        result["divergence_1d"] = detect_rsi_divergence(df_1d)
     except Exception as e:
         print("1d error: " + str(e))
         result["tf_1d"] = None
+        result["divergence_1d"] = {"type": "NONE"}
     return result
 
 
@@ -781,6 +929,36 @@ def run_cycle(symbol):
             + "  Large transfers TO exchange = possible selling pressure\n"
             + "  Large transfers FROM exchange = possible accumulation\n")
 
+    # RSI Divergence block
+    div_block = ""
+    divs = []
+    for tf_name, div_key in [("1H", "divergence_1h"), ("4H", "divergence_4h"), ("1D", "divergence_1d")]:
+        div = market.get(div_key, {})
+        if div and div.get("type") != "NONE" and div.get("description"):
+            divs.append("  [" + tf_name + "] " + div["description"])
+    if divs:
+        div_block = "\nRSI DIVERGENCE (важный сигнал разворота):\n" + "\n".join(divs) + "\n"
+        print(symbol.split("/")[0] + " divergence: " + " | ".join([d.strip() for d in divs]))
+
+    # Volume S/R levels block
+    vol_sr_block = ""
+    all_levels = market.get("vol_levels_1h", []) + market.get("vol_levels_4h", [])
+    if all_levels:
+        current_price = market["price"]
+        supports = sorted([l for l in all_levels if l["type"] == "SUPPORT"],
+                         key=lambda x: x["price"], reverse=True)[:2]
+        resistances = sorted([l for l in all_levels if l["type"] == "RESISTANCE"],
+                            key=lambda x: x["price"])[:2]
+        parts = []
+        for r in resistances:
+            dist = round((r["price"] - current_price) / current_price * 100, 1)
+            parts.append("  RESISTANCE $" + str(r["price"]) + " (vol=" + str(r["vol_ratio"]) + "x, +" + str(dist) + "%)")
+        for s in supports:
+            dist = round((current_price - s["price"]) / current_price * 100, 1)
+            parts.append("  SUPPORT $" + str(s["price"]) + " (vol=" + str(s["vol_ratio"]) + "x, -" + str(dist) + "%)")
+        if parts:
+            vol_sr_block = "\nVOLUME-BASED S/R LEVELS (реальные уровни по объёму):\n" + "\n".join(parts) + "\n"
+
     # Coin-specific profile and volume penalty
     coin = symbol.split("/")[0].upper()
     profile = get_coin_profile(symbol)
@@ -813,7 +991,8 @@ def run_cycle(symbol):
         "4. HOLD only when signals are truly mixed with NO clear edge.",
         "5. Confidence base: 0.65-0.75. Apply volume penalty: " + str(vol_penalty) + " (already calculated).",
         "   Final confidence must be: base + " + str(vol_penalty) + ". If vol_ratio 1H=" + str(round(market["tf_1h"].get("vol_ratio",1),2)) + " and 4H=" + str(round(market["tf_4h"].get("vol_ratio",1),2)) + ".",
-        "6. Set stop_loss and take_profit at key support/resistance levels.",
+        "6. If RSI DIVERGENCE detected — it OVERRIDES trend signals. Bearish divergence → prefer SELL/HOLD even in uptrend.",
+        "7. Use VOLUME S/R levels for stop_loss and take_profit — they are stronger than simple High/Low.",
         "",
         "SYMBOL: " + market["symbol"],
         "PRICE: $" + str(market["price"]),
@@ -825,6 +1004,8 @@ def run_cycle(symbol):
         tf_summary(market["tf_1d"], "1D"),
         fg_block,
         liqs_block,
+        div_block,
+        vol_sr_block,
         whale_block,
         news_block,
         "Count the BUY/SELL rules above carefully before deciding.",
