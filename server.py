@@ -57,6 +57,7 @@ def get_accuracy_stats():
                     COUNT(*) FILTER (WHERE """ + col + """ = 'NEUTRAL') as neutral,
                     COUNT(*) FILTER (WHERE """ + col + """ IS NOT NULL) as total
                 FROM signal_results
+                WHERE action != 'HOLD'
             """)
             row = cur.fetchone()
             wins, losses, neutral, total = row
@@ -79,6 +80,7 @@ def get_accuracy_stats():
                 COUNT(*) FILTER (WHERE result_24h = 'LOSS') as losses,
                 COUNT(*) FILTER (WHERE result_24h IS NOT NULL) as total
             FROM signal_results
+            WHERE action != 'HOLD'
             GROUP BY symbol
             ORDER BY symbol
         """)
@@ -101,6 +103,7 @@ def get_accuracy_stats():
                 COUNT(*) FILTER (WHERE result_24h = 'NEUTRAL') as neutral,
                 COUNT(*) FILTER (WHERE result_24h IS NOT NULL) as total
             FROM signal_results
+            WHERE action != 'HOLD'
             GROUP BY action
         """)
         actions = {}
@@ -263,7 +266,7 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="card"><div class="label">SELL Signals</div><div class="value red" id="sell-count">—</div></div>
     <div class="card"><div class="label">HOLD Signals</div><div class="value yellow" id="hold-count">—</div></div>
     <div class="card"><div class="label">Price per Signal</div><div class="value blue">$0.10 USDC</div></div>
-    <div class="card"><div class="label">Accuracy 24h</div><div class="value purple" id="acc-24h">—</div><div style="font-size:10px;color:#556677;margin-top:2px">incl. HOLD</div></div>
+    <div class="card"><div class="label">Accuracy 24h</div><div class="value purple" id="acc-24h">—</div><div style="font-size:10px;color:#556677;margin-top:2px">BUY+SELL only</div></div>
     <div class="card"><div class="label">Real Accuracy</div><div class="value purple" id="acc-real">—</div><div style="font-size:10px;color:#556677;margin-top:2px" id="acc-real-sub">BUY+SELL only</div></div>
     <div class="card"><div class="label">Fear & Greed</div><div class="value" id="fg-card" style="font-size:20px">—</div><div id="fg-label" style="font-size:11px;color:#8899aa;margin-top:2px"></div></div>
   </div>
@@ -611,7 +614,7 @@ function renderResultsTable() {
   tbody.innerHTML = accuracyData.history.map(r => {
     const ts = r.time ? r.time.substring(0, 16).replace("T", " ") : "—";
     const entryPrice = r.price_at_signal || 0;
-    const price = entryPrice ? "$" + Number(entryPrice).toLocaleString() : "—";
+    const price = entryPrice ? "$" + fmtPrice(entryPrice) : "—";
     // Price change 24h
     let change24 = "—";
     if (r.price_24h && entryPrice) {
@@ -730,7 +733,7 @@ function renderCards() {
     const news = (s.news || []).slice(0, 2);
     return '<div class="signal-card">' +
       '<div class="coin">' + (s.symbol || s.coin || "?") + '</div>' +
-      '<div class="price">$' + Number(s.price || 0).toLocaleString() + '</div>' +
+      '<div class="price">$' + fmtPrice(s.price || 0) + '</div>' +
       '<span class="action ' + s.action + '">' + s.action + '</span>' +
       '<div class="conf">Confidence: ' + conf + '%' +
         '<div class="conf-bar"><div class="conf-fill" style="width:' + conf + '%"></div></div>' +
@@ -798,7 +801,7 @@ function renderHistory() {
     return '<tr>' +
       '<td>' + (s.symbol || "?") + '</td>' +
       '<td><span class="badge ' + s.action + '">' + s.action + '</span></td>' +
-      '<td>$' + Number(s.price || 0).toLocaleString() + '</td>' +
+      '<td>$' + fmtPrice(s.price || 0) + '</td>' +
       '<td>' + conf + '%</td>' +
       '<td><span class="badge ' + (tf1.trend||"") + '">' + (tf1.trend || "—") + '</span></td>' +
       '<td><span class="badge ' + (tf4.trend||"") + '">' + (tf4.trend || "—") + '</span></td>' +
