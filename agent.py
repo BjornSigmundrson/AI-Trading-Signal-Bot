@@ -1246,81 +1246,89 @@ if __name__ == "__main__":
 
     cycle = 0
     while True:
-        cycle += 1
-        print("\n=== Cycle #" + str(cycle) + " ===")
-
-        # Check results of old signals
-        print("\n--- Checking signal results ---")
         try:
-            update_signal_results()
-        except Exception as e:
-            print("Results check error: " + str(e))
+            cycle += 1
+            print("\n=== Cycle #" + str(cycle) + " ===")
 
-        # Check open paper trades
-        try:
-            conn = get_db()
-            current_prices = {}
-            for sym in SYMBOLS:
-                try:
-                    coin = sym.split("/")[0]
-                    ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
-                    if ohlcv:
-                        current_prices[coin] = ohlcv[-1][4]
-                except:
-                    pass
-            if current_prices:
-                paper_check_open_trades(conn, current_prices)
-            conn.close()
-        except Exception as e:
-            print("Paper check error: " + str(e))
+            # Check results of old signals
+            print("\n--- Checking signal results ---")
+            try:
+                update_signal_results()
+            except Exception as e:
+                print("Results check error: " + str(e))
 
-        # Run new signals
-        for symbol in SYMBOLS:
-            print("\n--- " + symbol + " ---")
-            signal = run_cycle(symbol)
-            tf1 = signal.get("tf_1h") or {}
-            tf4 = signal.get("tf_4h") or {}
-            tf1d = signal.get("tf_1d") or {}
-            print("Price: $" + str(signal.get("price", 0)))
-            print("1H: RSI=" + str(tf1.get("rsi")) + " MACD=" + str(tf1.get("macd")) + " Trend=" + str(tf1.get("trend")))
-            print("4H: RSI=" + str(tf4.get("rsi")) + " MACD=" + str(tf4.get("macd")) + " Trend=" + str(tf4.get("trend")))
-            print("1D: RSI=" + str(tf1d.get("rsi")) + " MACD=" + str(tf1d.get("macd")) + " Trend=" + str(tf1d.get("trend")))
-            # Apply volume confidence penalty
-            vol_penalty = volume_confidence_penalty(
-                signal.get("tf_1h") or {}, signal.get("tf_4h") or {}
-            )
-            if vol_penalty < 0 and signal.get("action") != "HOLD":
-                original_conf = signal.get("confidence", 0.7)
-                signal["confidence"] = round(max(0.50, original_conf + vol_penalty), 2)
-                print("Volume penalty " + str(vol_penalty) + ": " + str(original_conf) + " → " + str(signal["confidence"]))
-
-            print("Signal: " + str(signal.get("action")) + " | Confidence: " + str(int(signal.get("confidence", 0) * 100)) + "%")
-            print(str(signal.get("reason", "")))
-            save_signal(symbol, signal)
-
-            # Paper trading — открываем сделку при BUY/SELL
-            if signal.get("action") in ("BUY", "SELL"):
-                sl = signal.get("stop_loss", 0)
-                tp = signal.get("take_profit", 0)
-                price = signal.get("price", 0)
-                print("Paper debug: action=" + str(signal.get("action")) +
-                      " sl=" + str(sl) + " tp=" + str(tp) + " price=" + str(price))
-                if not sl or not tp or sl <= 0 or tp <= 0:
-                    # Try to set SL/TP from support/resistance if missing
-                    tf1h = signal.get("tf_1h") or {}
-                    sl = sl or tf1h.get("support", 0)
-                    tp = tp or tf1h.get("resistance", 0)
-                    print("Paper debug: using S/R fallback sl=" + str(sl) + " tp=" + str(tp))
-                if sl and tp and sl > 0 and tp > 0 and price > 0:
+            # Check open paper trades
+            try:
+                conn = get_db()
+                current_prices = {}
+                for sym in SYMBOLS:
                     try:
-                        pconn = get_db()
-                        paper_open_trade(pconn, symbol, signal["action"],
-                                         price, sl, tp,
-                                         signal.get("confidence", 0.7))
-                        pconn.close()
-                    except Exception as pe:
-                        print("Paper open error: " + str(pe))
-                else:
-                    print("Paper trade SKIPPED: invalid sl/tp/price")
+                        coin = sym.split("/")[0]
+                        ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
+                        if ohlcv:
+                            current_prices[coin] = ohlcv[-1][4]
+                    except:
+                        pass
+                if current_prices:
+                    paper_check_open_trades(conn, current_prices)
+                conn.close()
+            except Exception as e:
+                print("Paper check error: " + str(e))
 
-        wait_until_next_hour()
+            # Run new signals
+            for symbol in SYMBOLS:
+                print("\n--- " + symbol + " ---")
+                signal = run_cycle(symbol)
+                tf1 = signal.get("tf_1h") or {}
+                tf4 = signal.get("tf_4h") or {}
+                tf1d = signal.get("tf_1d") or {}
+                print("Price: $" + str(signal.get("price", 0)))
+                print("1H: RSI=" + str(tf1.get("rsi")) + " MACD=" + str(tf1.get("macd")) + " Trend=" + str(tf1.get("trend")))
+                print("4H: RSI=" + str(tf4.get("rsi")) + " MACD=" + str(tf4.get("macd")) + " Trend=" + str(tf4.get("trend")))
+                print("1D: RSI=" + str(tf1d.get("rsi")) + " MACD=" + str(tf1d.get("macd")) + " Trend=" + str(tf1d.get("trend")))
+
+                # Apply volume confidence penalty
+                vol_penalty = volume_confidence_penalty(
+                    signal.get("tf_1h") or {}, signal.get("tf_4h") or {}
+                )
+                if vol_penalty < 0 and signal.get("action") != "HOLD":
+                    original_conf = signal.get("confidence", 0.7)
+                    signal["confidence"] = round(max(0.50, original_conf + vol_penalty), 2)
+                    print("Volume penalty " + str(vol_penalty) + ": " + str(original_conf) + " → " + str(signal["confidence"]))
+
+                print("Signal: " + str(signal.get("action")) + " | Confidence: " + str(int(signal.get("confidence", 0) * 100)) + "%")
+                print(str(signal.get("reason", "")))
+                save_signal(symbol, signal)
+
+                # Paper trading — открываем сделку при BUY/SELL
+                if signal.get("action") in ("BUY", "SELL"):
+                    sl = signal.get("stop_loss", 0)
+                    tp = signal.get("take_profit", 0)
+                    price = signal.get("price", 0)
+                    print("Paper debug: action=" + str(signal.get("action")) +
+                          " sl=" + str(sl) + " tp=" + str(tp) + " price=" + str(price))
+                    if not sl or not tp or sl <= 0 or tp <= 0:
+                        tf1h = signal.get("tf_1h") or {}
+                        sl = sl or tf1h.get("support", 0)
+                        tp = tp or tf1h.get("resistance", 0)
+                        print("Paper debug: using S/R fallback sl=" + str(sl) + " tp=" + str(tp))
+                    if sl and tp and sl > 0 and tp > 0 and price > 0:
+                        try:
+                            pconn = get_db()
+                            paper_open_trade(pconn, symbol, signal["action"],
+                                             price, sl, tp,
+                                             signal.get("confidence", 0.7))
+                            pconn.close()
+                        except Exception as pe:
+                            print("Paper open error: " + str(pe))
+                    else:
+                        print("Paper trade SKIPPED: invalid sl/tp/price")
+
+            wait_until_next_hour()
+
+        except Exception as loop_err:
+            print("CYCLE ERROR: " + str(loop_err))
+            import traceback
+            traceback.print_exc()
+            print("Waiting 60s before retry...")
+            time.sleep(60)
