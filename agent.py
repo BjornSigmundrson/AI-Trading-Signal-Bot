@@ -1257,18 +1257,31 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Results check error: " + str(e))
 
-            # Check open paper trades
+            # Check open paper trades — fetch live ticker prices
             try:
                 conn = get_db()
                 current_prices = {}
                 for sym in SYMBOLS:
                     try:
                         coin = sym.split("/")[0]
-                        ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
-                        if ohlcv:
-                            current_prices[coin] = ohlcv[-1][4]
-                    except:
-                        pass
+                        # Use ticker for real-time price, not OHLCV
+                        ticker = None
+                        for ex in EXCHANGES:
+                            try:
+                                ticker = ex.fetch_ticker(sym)
+                                if ticker and ticker.get("last"):
+                                    current_prices[coin] = float(ticker["last"])
+                                    break
+                            except:
+                                continue
+                        if not current_prices.get(coin):
+                            # Fallback to OHLCV
+                            ohlcv = fetch_ohlcv_with_fallback(sym, "1h", limit=2)
+                            if ohlcv:
+                                current_prices[coin] = ohlcv[-1][4]
+                    except Exception as pe:
+                        print("Price fetch error " + sym + ": " + str(pe))
+                print("Paper prices: " + str({k: round(v,4) for k,v in current_prices.items()}))
                 if current_prices:
                     paper_check_open_trades(conn, current_prices)
                 conn.close()

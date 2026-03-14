@@ -313,6 +313,12 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="card"><div class="label">Win Rate</div><div class="value purple" id="paper-winrate">—</div><div style="font-size:11px;color:#556677" id="paper-wl">—</div></div>
     <div class="card"><div class="label">Открытых</div><div class="value" id="paper-open-count">—</div><div style="font-size:11px;color:#556677">сделок</div></div>
   </div>
+  <div style="margin-bottom:16px">
+    <button onclick="paperReset()" style="background:#1e3a5f;color:#ff4466;border:1px solid #ff4466;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">
+      🔄 Сбросить все сделки
+    </button>
+    <span style="font-size:11px;color:#556677;margin-left:10px">Закрывает все открытые сделки и сбрасывает баланс до $1000</span>
+  </div>
   <h3 style="color:#aabbcc;margin:16px 0 8px">Открытые сделки</h3>
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
@@ -465,6 +471,16 @@ async function loadPaper() {
       closedTbody.innerHTML = "<tr><td colspan='7' style='color:#556677;text-align:center;padding:12px'>Нет закрытых сделок</td></tr>";
     }
   } catch(e) { console.error("Paper load error:", e); }
+}
+
+async function paperReset() {
+  if (!confirm("Сбросить все сделки и баланс до $1000?")) return;
+  try {
+    const res = await fetch(API + "/paper/reset", {method: "POST"});
+    const d = await res.json();
+    if (d.ok) { alert("Сброшено! " + d.message); loadPaper(); }
+    else alert("Ошибка: " + d.error);
+  } catch(e) { alert("Ошибка: " + e); }
 }
 
 async function loadFearGreed() {
@@ -996,6 +1012,21 @@ def paper_stats():
             "open_trades": open_trades,
             "closed_trades": closed_trades
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/paper/reset", methods=["POST"])
+def paper_reset():
+    """Закрывает все открытые сделки и сбрасывает баланс."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("UPDATE paper_trades SET status='CLOSED', exit_reason='MANUAL_RESET', closed_at=NOW(), exit_price=entry_price, pnl_usd=0, pnl_pct=0 WHERE status='OPEN'")
+        cur.execute("UPDATE paper_portfolio SET balance=1000, updated_at=NOW()")
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True, "message": "All trades closed, balance reset to $1000"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
