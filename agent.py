@@ -559,93 +559,101 @@ def fetch_market_context():
 
 
 
-def fetch_messari_metrics(coin_name):
+def fetch_onchain_metrics(coin_name):
     """
-    Fetch on-chain metrics from Messari — free tier, no key needed.
-    Returns NVT, active addresses, tx volume, developer activity.
-    These are DIFFERENT from price/technical data — no conflicts.
+    Fetch market metrics from CoinMarketCap — 10k req/month free.
+    Gives: price changes, volume, market cap, dominance, circulating supply.
     """
-    name_map = {
-        "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
-        "avax": "avalanche-2", "link": "chainlink", "doge": "dogecoin", "xrp": "xrp"
+    cmc_key = os.getenv("CMC_API_KEY", "")
+    if not cmc_key:
+        return None
+
+    symbol_map = {
+        "btc": "BTC", "eth": "ETH", "sol": "SOL",
+        "avax": "AVAX", "link": "LINK", "doge": "DOGE", "xrp": "XRP"
     }
-    slug = name_map.get(coin_name.lower(), coin_name.lower())
+    symbol = symbol_map.get(coin_name.lower())
+    if not symbol:
+        return None
 
     try:
-        url = "https://data.messari.io/api/v1/assets/" + slug + "/metrics"
+        url = ("https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+               "?symbol=" + symbol + "&convert=USD")
         req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
+            "X-CMC_PRO_API_KEY": cmc_key,
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0"
         })
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
 
-        metrics = data.get("data", {}).get("metrics", {})
-        if not metrics:
+        coin_data = data.get("data", {}).get(symbol, {})
+        if not coin_data:
             return None
 
+        quote = coin_data.get("quote", {}).get("USD", {})
         result = {}
 
-        # On-chain activity
-        on_chain = metrics.get("on_chain_data", {})
-        if on_chain:
-            tx_vol = on_chain.get("transfer_volume_usd_last_24_hours")
-            active_addr = on_chain.get("active_addresses")
-            if tx_vol:
-                result["tx_volume_24h_usd"] = round(tx_vol / 1e6, 1)  # in millions
-            if active_addr:
-                result["active_addresses_24h"] = int(active_addr)
+        # Price changes
+        c1h  = quote.get("percent_change_1h", 0) or 0
+        c24h = quote.get("percent_change_24h", 0) or 0
+        c7d  = quote.get("percent_change_7d", 0) or 0
+        c30d = quote.get("percent_change_30d", 0) or 0
+        result["change_1h"]  = round(c1h, 2)
+        result["change_24h"] = round(c24h, 2)
+        result["change_7d"]  = round(c7d, 1)
+        result["change_30d"] = round(c30d, 1)
 
-        # Market data — NVT ratio (Network Value / Transaction volume)
-        market = metrics.get("market_data", {})
-        if market:
-            mcap = market.get("market_cap_usd", 0)
-            if mcap and result.get("tx_volume_24h_usd"):
-                tx_annualized = result["tx_volume_24h_usd"] * 365
-                if tx_annualized > 0:
-                    nvt = round(mcap / (tx_annualized * 1e6), 1)
-                    result["nvt_ratio"] = nvt
-                    if nvt > 100:
-                        result["nvt_signal"] = "HIGH NVT " + str(nvt) + " — возможна перекупленность по on-chain"
-                    elif nvt < 20:
-                        result["nvt_signal"] = "LOW NVT " + str(nvt) + " — актив недооценён по on-chain"
-                    else:
-                        result["nvt_signal"] = "NVT " + str(nvt) + " — нейтрально"
+        # Volume and market cap
+        vol_24h = quote.get("volume_24h", 0) or 0
+        mcap    = quote.get("market_cap", 0) or 0
+        if mcap > 0 and vol_24h > 0:
+            vol_mcap = round(vol_24h / mcap * 100, 1)
+            result["vol_mcap_ratio"] = vol_mcap
+            if vol_mcap > 20:
+                result["vol_signal"] = "Очень высокий объём/mcap " + str(vol_mcap) + "% — возможна аномальная активность"
+            elif vol_mcap < 2:
+                result["vol_signal"] = "Низкий объём/mcap " + str(vol_mcap) + "% — слабый интерес рынка"
 
-        # Developer activity
-        dev = metrics.get("developer_activity", {})
-        if dev:
-            commits = dev.get("commits_last_3_months")
-            if commits:
-                result["dev_commits_3m"] = int(commits)
-                if commits > 500:
-                    result["dev_signal"] = "Высокая активность разработки: " + str(commits) + " коммитов за 3 мес"
-                elif commits < 50:
-                    result["dev_signal"] = "Низкая активность разработки: " + str(commits) + " коммитов за 3 мес"
+        # Market dominance (only BTC/ETH)
+        dom = coin_data.get("market_cap_dominance", 0) or 0
+        if dom > 0:
+            result["dominance"] = round(dom, 1)
 
-        # All-time high distance
-        ath = metrics.get("all_time_high", {})
-        if ath:
-            ath_price = ath.get("price")
-            current = market.get("price_usd")
-            if ath_price and current:
-                pct_from_ath = round((current - ath_price) / ath_price * 100, 1)
-                result["pct_from_ath"] = pct_from_ath
-                if pct_from_ath < -70:
-                    result["ath_signal"] = str(pct_from_ath) + "% от ATH — исторически зона накопления"
-                elif pct_from_ath > -10:
-                    result["ath_signal"] = str(pct_from_ath) + "% от ATH — цена у максимумов, осторожно"
+        # Circulating vs max supply
+        circ  = coin_data.get("circulating_supply", 0) or 0
+        total = coin_data.get("total_supply", 0) or 0
+        if circ and total and total > 0:
+            supply_pct = round(circ / total * 100, 1)
+            result["supply_pct"] = supply_pct
+            if supply_pct < 50:
+                result["supply_signal"] = "Только " + str(supply_pct) + "% в обращении — большая часть заблокирована"
 
-        if result:
-            print(coin_name.upper() + " Messari: " +
-                  "tx=" + str(result.get("tx_volume_24h_usd", "?")) + "M " +
-                  "addr=" + str(result.get("active_addresses_24h", "?")) +
-                  " NVT=" + str(result.get("nvt_ratio", "?")))
+        # Market rank
+        rank = coin_data.get("cmc_rank", 0)
+        if rank:
+            result["rank"] = rank
+
+        # Trend signals
+        if c7d > 15:
+            result["trend_7d"] = "Сильный рост за 7д: +" + str(round(c7d,1)) + "% — импульс сохраняется"
+        elif c7d < -20:
+            result["trend_7d"] = "Сильное падение за 7д: " + str(round(c7d,1)) + "% — возможная перепроданность"
+
+        if c24h > 5:
+            result["trend_24h"] = "Рост за 24ч: +" + str(round(c24h,1)) + "% — краткосрочный импульс"
+        elif c24h < -5:
+            result["trend_24h"] = "Падение за 24ч: " + str(round(c24h,1)) + "% — краткосрочное давление продавцов"
+
+        print(coin_name.upper() + " CMC: 24h=" + str(round(c24h,1)) +
+              "% 7d=" + str(round(c7d,1)) +
+              "% vol/mcap=" + str(result.get("vol_mcap_ratio", "?")) + "%")
         return result if result else None
 
     except Exception as e:
-        print("Messari error for " + coin_name + ": " + str(e))
+        print("CoinMarketCap error for " + coin_name + ": " + str(e))
         return None
+
 
 def analyze_timeframe(df):
     rsi = float(ta.momentum.RSIIndicator(df["close"], window=14).rsi().iloc[-1])
@@ -972,15 +980,18 @@ def get_coin_profile(symbol):
     })
 
 def volume_confidence_penalty(tf_1h, tf_4h):
-    """Снижает confidence если объём низкий на обоих таймфреймах."""
+    """Снижает confidence если объём низкий.
+    4H порог ниже чем 1H — 4H свеча естественно имеет меньший vol_ratio.
+    Штраф только если ОБА таймфрейма сигнализируют об аномально низком объёме.
+    """
     vol_1h = tf_1h.get("vol_ratio", 1.0)
     vol_4h = tf_4h.get("vol_ratio", 1.0)
-    if vol_1h < 0.3 and vol_4h < 0.5:
-        return -0.10  # Сильный штраф — оба TF без объёма
-    if vol_1h < 0.5 and vol_4h < 0.5:
-        return -0.07  # Умеренный штраф
-    if vol_1h < 0.5:
-        return -0.04  # Лёгкий штраф — только 1H
+    if vol_1h < 0.15 and vol_4h < 0.15:
+        return -0.08  # Экстремально низкий объём на обоих
+    if vol_1h < 0.3 and vol_4h < 0.3:
+        return -0.05  # Умеренный штраф
+    if vol_1h < 0.3:
+        return -0.03  # Лёгкий штраф — только 1H слабый
     return 0.0        # Объём нормальный
 
 def tf_summary(tf_data, name):
@@ -1147,7 +1158,7 @@ def run_cycle(symbol):
     # Messari on-chain metrics
     messari = None
     try:
-        messari = fetch_messari_metrics(coin_name)
+        messari = fetch_onchain_metrics(coin_name)
     except Exception as e:
         print("Messari error: " + str(e))
 
@@ -1191,18 +1202,26 @@ def run_cycle(symbol):
     messari_data = messari  # use directly from fetch
     if messari_data:
         parts = []
-        if messari_data.get("tx_volume_24h_usd"):
-            parts.append("  TX volume 24h: $" + str(messari_data["tx_volume_24h_usd"]) + "M")
-        if messari_data.get("active_addresses_24h"):
-            parts.append("  Active addresses 24h: " + str(messari_data["active_addresses_24h"]))
-        if messari_data.get("nvt_signal"):
-            parts.append("  " + messari_data["nvt_signal"])
-        if messari_data.get("dev_signal"):
-            parts.append("  " + messari_data["dev_signal"])
-        if messari_data.get("ath_signal"):
-            parts.append("  " + messari_data["ath_signal"])
+        if messari_data.get("change_24h") is not None:
+            parts.append("  Price 24h: " + ("+".join(["", str(messari_data["change_24h"])]) if messari_data["change_24h"] > 0 else str(messari_data["change_24h"])) + "%")
+        if messari_data.get("change_7d") is not None:
+            parts.append("  Price 7d: " + ("+" if messari_data["change_7d"] > 0 else "") + str(messari_data["change_7d"]) + "%")
+        if messari_data.get("change_30d") is not None:
+            parts.append("  Price 30d: " + ("+" if messari_data["change_30d"] > 0 else "") + str(messari_data["change_30d"]) + "%")
+        if messari_data.get("vol_mcap_ratio"):
+            parts.append("  Vol/MCap: " + str(messari_data["vol_mcap_ratio"]) + "%")
+        if messari_data.get("dominance"):
+            parts.append("  Dominance: " + str(messari_data["dominance"]) + "%")
+        if messari_data.get("vol_signal"):
+            parts.append("  " + messari_data["vol_signal"])
+        if messari_data.get("trend_24h"):
+            parts.append("  " + messari_data["trend_24h"])
+        if messari_data.get("trend_7d"):
+            parts.append("  " + messari_data["trend_7d"])
+        if messari_data.get("supply_signal"):
+            parts.append("  " + messari_data["supply_signal"])
         if parts:
-            messari_block = "\nON-CHAIN METRICS (Messari — реальное использование сети):\n" + "\n".join(parts) + "\n"
+            messari_block = "\nMARKET METRICS (CoinMarketCap):\n" + "\n".join(parts) + "\n"
 
     # CryptoCompare sentiment block
     sentiment_block = ""
