@@ -282,7 +282,17 @@ STATS_HTML = """<!DOCTYPE html>
   <!-- Latest signals grid -->
   <div class="section">
     <h2>📊 Latest Signals</h2>
-    <div class="signals-grid" id="signals-grid">
+    <div id="live-ticker" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:10px 14px;background:#070d1a;border-radius:10px;border:1px solid #0d1f36">
+  <span style="font-size:11px;color:#445566;align-self:center">⚡ LIVE</span>
+  <span id="lt-BTC" style="font-size:13px;color:#8899aa">BTC —</span>
+  <span id="lt-ETH" style="font-size:13px;color:#8899aa">ETH —</span>
+  <span id="lt-SOL" style="font-size:13px;color:#8899aa">SOL —</span>
+  <span id="lt-AVAX" style="font-size:13px;color:#8899aa">AVAX —</span>
+  <span id="lt-LINK" style="font-size:13px;color:#8899aa">LINK —</span>
+  <span id="lt-DOGE" style="font-size:13px;color:#8899aa">DOGE —</span>
+  <span id="lt-XRP" style="font-size:13px;color:#8899aa">XRP —</span>
+</div>
+<div class="signals-grid" id="signals-grid">
       <div style="color:#8899aa">Loading...</div>
     </div>
   </div>
@@ -326,15 +336,16 @@ STATS_HTML = """<!DOCTYPE html>
   <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
     <thead><tr style="color:#556677;border-bottom:1px solid #1e3a5f">
-      <th style="text-align:left;padding:8px;width:12%">Монета</th>
-      <th style="text-align:center;width:8%">Тип</th>
-      <th style="text-align:right;padding:8px;width:16%">Вход</th>
-      <th style="text-align:right;padding:8px;width:16%">SL</th>
-      <th style="text-align:right;padding:8px;width:16%">TP</th>
+      <th style="text-align:left;padding:8px;width:11%">Монета</th>
+      <th style="text-align:center;width:7%">Тип</th>
+      <th style="text-align:right;padding:8px;width:13%">Вход</th>
+      <th style="text-align:right;padding:8px;width:13%">Цена</th>
+      <th style="text-align:right;padding:8px;width:12%">SL</th>
+      <th style="text-align:right;padding:8px;width:12%">TP</th>
       <th style="text-align:right;padding:8px;width:16%">P&L $</th>
       <th style="text-align:right;padding:8px;width:16%">P&L %</th>
     </tr></thead>
-    <tbody id="paper-open-tbody"><tr><td colspan="7" style="color:#556677;text-align:center;padding:12px">Нет открытых сделок</td></tr></tbody>
+    <tbody id="paper-open-tbody"><tr><td colspan="8" style="color:#556677;text-align:center;padding:12px">Нет открытых сделок</td></tr></tbody>
   </table></div>
   <h3 style="color:#aabbcc;margin:20px 0 8px">История сделок</h3>
   <div style="overflow-x:auto">
@@ -400,6 +411,61 @@ async function loadAccuracy() {
   } catch(e) { console.error("Accuracy load error:", e); }
 }
 
+// Live prices via Hyperliquid WebSocket
+var livePrice = {};
+
+function connectLivePrice() {
+  try {
+    var ws = new WebSocket("wss://api.hyperliquid.xyz/ws");
+    var coins = ["BTC","ETH","SOL","AVAX","LINK","DOGE","XRP"];
+
+    ws.onopen = function() {
+      // Subscribe to all trades
+      coins.forEach(function(coin) {
+        ws.send(JSON.stringify({
+          "method": "subscribe",
+          "subscription": {"type": "trades", "coin": coin}
+        }));
+      });
+      console.log("Hyperliquid WS connected");
+    };
+
+    ws.onmessage = function(event) {
+      try {
+        var data = JSON.parse(event.data);
+        if (data.channel === "trades" && data.data && data.data.length > 0) {
+          var trade = data.data[data.data.length - 1];
+          var coin = trade.coin;
+          var price = parseFloat(trade.px);
+          if (coin && price) {
+            livePrice[coin] = price;
+            // Update live price cell if visible
+            var el = document.getElementById("live-" + coin);
+            if (el) {
+              el.textContent = "$" + fmtPrice(price);
+            }
+          }
+        }
+      } catch(e) {}
+    };
+
+    ws.onerror = function() {
+      console.log("Hyperliquid WS error, reconnecting in 5s...");
+      setTimeout(connectLivePrice, 5000);
+    };
+
+    ws.onclose = function() {
+      console.log("Hyperliquid WS closed, reconnecting in 5s...");
+      setTimeout(connectLivePrice, 5000);
+    };
+  } catch(e) {
+    console.log("WS not available: " + e);
+  }
+}
+
+// Start WebSocket connection
+connectLivePrice();
+
 function fmtPrice(v) {
   var n = Number(v);
   if (!n) return "0";
@@ -439,15 +505,20 @@ async function loadPaper() {
     const openTbody = document.getElementById("paper-open-tbody");
     if (d.open_trades.length) {
       openTbody.innerHTML = d.open_trades.map(t => {
+        const coin = t.symbol.split("/")[0];
+        const lp = livePrice[coin];
         const pnlCol = t.pnl_usd >= 0 ? "#00cc88" : "#ff4466";
-        return "<tr style='border-bottom:1px solid #0d1f36'>" +
-          "<td style='padding:8px;font-weight:bold'>" + t.symbol.split("/")[0] + "</td>" +
-          "<td style='color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center'>" + t.action + "</td>" +
-          "<td style='text-align:right'>$" + fmtPrice(t.entry_price) + "</td>" +
-          "<td style='text-align:right;color:#ff4466'>$" + fmtPrice(t.stop_loss) + "</td>" +
-          "<td style='text-align:right;color:#00cc88'>$" + fmtPrice(t.take_profit) + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"-") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"-") + Math.abs(t.pnl_pct).toFixed(2) + "%</td>" +
+        const lpCol = !lp ? "#8899aa" : (t.action === "BUY" ? (lp >= t.entry_price ? "#00cc88" : "#ff4466") : (lp <= t.entry_price ? "#00cc88" : "#ff4466"));
+        const lpCell = lp ? ("$" + fmtPrice(lp)) : "<span style=\'color:#445566\'>...</span>";
+        return "<tr style=\'border-bottom:1px solid #0d1f36\'>" +
+          "<td style=\'padding:8px;font-weight:bold\'>" + coin + "</td>" +
+          "<td style=\'color:" + (t.action==="BUY"?"#00cc88":"#ff4466") + ";text-align:center;padding:8px\'>" + t.action + "</td>" +
+          "<td style=\'text-align:right;padding:8px\'>" + "$" + fmtPrice(t.entry_price) + "</td>" +
+          "<td style=\'text-align:right;padding:8px;font-weight:bold;color:" + lpCol + "\' id=\'live-" + coin + "\'>" + lpCell + "</td>" +
+          "<td style=\'text-align:right;padding:8px;color:#ff4466\'>" + "$" + fmtPrice(t.stop_loss) + "</td>" +
+          "<td style=\'text-align:right;padding:8px;color:#00cc88\'>" + "$" + fmtPrice(t.take_profit) + "</td>" +
+          "<td style=\'text-align:right;padding:8px;color:" + pnlCol + "\'>" + (t.pnl_usd>=0?"+":"-") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
+          "<td style=\'text-align:right;padding:8px;color:" + pnlCol + "\'>" + (t.pnl_pct>=0?"+":"-") + Math.abs(t.pnl_pct).toFixed(2) + "%</td>" +
         "</tr>";
       }).join("");
     } else {
@@ -735,6 +806,7 @@ function renderCards() {
       '<div class="coin">' + (s.symbol || s.coin || "?") + '</div>' +
       '<div class="price">$' + fmtPrice(s.price || 0) + '</div>' +
       '<span class="action ' + s.action + '">' + s.action + '</span>' +
+      (s.emergency ? '<span style="background:#ff6600;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px">⚡ EMERGENCY</span>' : '') +
       '<div class="conf">Confidence: ' + conf + '%' +
         '<div class="conf-bar"><div class="conf-fill" style="width:' + conf + '%"></div></div>' +
       '</div>' +
@@ -814,6 +886,27 @@ function renderHistory() {
 loadSignals();
 loadAccuracy();
 loadFearGreed();
+
+async function updateLiveTicker() {
+  try {
+    const res = await fetch(API + "/live");
+    if (!res.ok) return;
+    const d = await res.json();
+    const prices = d.prices || {};
+    const coins = ["BTC","ETH","SOL","AVAX","LINK","DOGE","XRP"];
+    coins.forEach(coin => {
+      const el = document.getElementById("lt-" + coin);
+      if (!el) return;
+      const price = prices[coin];
+      if (price) {
+        el.textContent = coin + " $" + fmtPrice(price);
+        el.style.color = "#00cc88";
+      }
+    });
+  } catch(e) {}
+}
+updateLiveTicker();
+setInterval(updateLiveTicker, 5000);
 setInterval(loadSignals, 60000);
 setInterval(loadAccuracy, 300000);
 setInterval(loadFearGreed, 3600000);
@@ -1015,6 +1108,23 @@ def paper_stats():
             "open_trades": open_trades,
             "closed_trades": closed_trades
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/live")
+def live_prices():
+    """Return live prices from Hyperliquid WebSocket cache."""
+    try:
+        # Import live prices from agent module
+        import importlib.util, sys, os
+        # Try to read from a shared temp file written by agent
+        live_file = "/tmp/hl_live_prices.json"
+        if os.path.exists(live_file):
+            import json as _j
+            with open(live_file) as f:
+                prices = _j.load(f)
+            return jsonify({"prices": prices, "source": "hyperliquid_ws"})
+        return jsonify({"prices": {}, "source": "not_connected"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
