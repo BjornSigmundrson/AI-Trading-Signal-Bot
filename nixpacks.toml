@@ -1,10 +1,8 @@
-providers = ["node", "python"]
+[phases.setup]
+nixPkgs = ["python311"]
 
 [phases.install]
-cmds = [
-  "npm install",
-  "pip install -r requirements.txt"
-]
+cmds = ["pip install langchain-anthropic pandas ta ccxt python-dotenv flask psycopg2-binary mcp websocket-client"]
 
 [start]
-cmd = "node server.js"
+cmd = "python server.py & python agent.py"

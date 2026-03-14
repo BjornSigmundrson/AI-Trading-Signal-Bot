@@ -2,8 +2,13 @@ import os
 import json
 import time
 import threading
-import websocket
 import json as _json_ws
+try:
+    import websocket
+    HAS_WEBSOCKET = True
+except ImportError:
+    HAS_WEBSOCKET = False
+    print('websocket-client not available, using REST polling fallback')
 import datetime
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -1389,14 +1394,72 @@ def on_hl_close(ws, close_status_code, close_msg):
     print("Hyperliquid WS closed — will reconnect in 30s")
 
 
+def run_price_monitor_rest():
+    """Fallback: REST polling every 60s if WebSocket unavailable."""
+    print("Price monitor started (REST polling fallback, every 60s)")
+    time.sleep(15)
+    while True:
+        try:
+            for sym in SYMBOLS:
+                coin = sym.split("/")[0]
+                try:
+                    price = None
+                    for ex in EXCHANGES:
+                        try:
+                            ticker = ex.fetch_ticker(sym)
+                            if ticker and ticker.get("last"):
+                                price = float(ticker["last"])
+                                break
+                        except:
+                            continue
+                    if not price:
+                        continue
+                    now = time.time()
+                    if coin not in _price_history:
+                        _price_history[coin] = []
+                    _price_history[coin].append((now, price))
+                    _price_history[coin] = [(t, p) for t, p in _price_history[coin] if t > now - 1800]
+
+                    change_15m = get_price_change_pct(coin, 15)
+                    change_5m  = get_price_change_pct(coin, 5)
+                    if abs(change_15m) > 3.0 or abs(change_5m) > 2.0:
+                        last_em = _last_emergency.get(coin, 0)
+                        if now - last_em > 1800:
+                            direction = "↑" if change_15m > 0 else "↓"
+                            print("⚡ EMERGENCY: " + coin + " " + direction + str(round(change_15m,1)) + "% in 15min")
+                            _last_emergency[coin] = now
+                            with _emergency_lock:
+                                try:
+                                    signal = run_cycle(sym)
+                                    vol_pen = volume_confidence_penalty(signal.get("tf_1h") or {}, signal.get("tf_4h") or {})
+                                    if vol_pen < 0 and signal.get("action") != "HOLD":
+                                        signal["confidence"] = round(max(0.50, signal.get("confidence", 0.7) + vol_pen), 2)
+                                    signal["emergency"] = True
+                                    signal["trigger"] = direction + str(round(change_15m,1)) + "% in 15min"
+                                    save_signal(sym, signal)
+                                    print("⚡ Emergency signal: " + sym + " " + signal.get("action","") + " " + str(round(signal.get("confidence",0)*100)) + "%")
+                                except Exception as se:
+                                    print("Emergency signal error: " + str(se))
+                except:
+                    pass
+            time.sleep(60)
+        except Exception as e:
+            print("REST monitor error: " + str(e))
+            time.sleep(60)
+
+
 def run_price_monitor():
     """
     Background thread — connects to Hyperliquid WebSocket.
-    Receives real-time trades, triggers emergency signals on >3% moves.
+    Falls back to REST polling if websocket-client not available.
     Auto-reconnects on disconnect.
     """
+    if not HAS_WEBSOCKET:
+        run_price_monitor_rest()
+        return
+
     print("Price monitor thread started (Hyperliquid WebSocket)")
-    time.sleep(15)  # Wait for exchanges to init
+    time.sleep(15)
 
     while True:
         try:
