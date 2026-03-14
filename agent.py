@@ -18,19 +18,17 @@ SYMBOLS = [
     "AVAX/USDT", "LINK/USDT", "DOGE/USDT", "XRP/USDT"
 ]
 
-# Per-coin RSS feeds
-COIN_NEWS_FEEDS = {
-    "btc":  ["https://cointelegraph.com/rss/tag/bitcoin",
-             "https://coindesk.com/arc/outboundfeeds/rss/?category=markets"],
-    "eth":  ["https://cointelegraph.com/rss/tag/ethereum",
-             "https://coindesk.com/arc/outboundfeeds/rss/?category=tech"],
-    "sol":  ["https://cointelegraph.com/rss/tag/solana"],
-    "avax": ["https://cointelegraph.com/rss/tag/avalanche"],
-    "link": ["https://cointelegraph.com/rss/tag/chainlink"],
-    "doge": ["https://cointelegraph.com/rss/tag/dogecoin"],
-    "xrp":  ["https://cointelegraph.com/rss/tag/xrp",
-             "https://coindesk.com/arc/outboundfeeds/rss/?category=markets"],
-}
+# General RSS feeds — filter by keyword
+NEWS_FEEDS = [
+    "https://cointelegraph.com/rss",
+    "https://coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+    "https://cryptopotato.com/feed/",
+    "https://beincrypto.com/feed/",
+]
+
+# Per-coin keyword map — no tag-specific feeds (unreliable)
+COIN_NEWS_FEEDS = {}  # empty — use keyword filter from NEWS_FEEDS
 
 NEWS_FEEDS = [
     "https://cointelegraph.com/rss",
@@ -319,21 +317,22 @@ def update_signal_results():
 
 
 def fetch_news(coin):
-    headlines = []
+    """Fetch coin-specific news from multiple RSS feeds filtered by keyword."""
     coin_name = coin.split("/")[0].lower()
     name_map = {
-        "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
-        "avax": "avalanche", "link": "chainlink", "doge": "dogecoin", "xrp": "ripple"
+        "btc": ["bitcoin", "btc"],
+        "eth": ["ethereum", "eth", "ether"],
+        "sol": ["solana", "sol"],
+        "avax": ["avalanche", "avax"],
+        "link": ["chainlink", "link"],
+        "doge": ["dogecoin", "doge"],
+        "xrp": ["xrp", "ripple"],
     }
-    full_name = name_map.get(coin_name, coin_name)
-    keywords = [coin_name, full_name]
-
-    # First try coin-specific feeds
-    specific_feeds = COIN_NEWS_FEEDS.get(coin_name, [])
-    all_feeds = specific_feeds + [f for f in NEWS_FEEDS if f not in specific_feeds]
-
+    keywords = name_map.get(coin_name, [coin_name])
+    headlines = []
     seen = set()
-    for feed_url in all_feeds:
+
+    for feed_url in NEWS_FEEDS:
         try:
             req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=8) as resp:
@@ -343,25 +342,21 @@ def fetch_news(coin):
                 title_el = item.find("title")
                 if title_el is not None and title_el.text:
                     title = title_el.text.strip()
-                    # For coin-specific feeds include all titles
-                    # For general feeds filter strictly by coin name
-                    if feed_url in specific_feeds:
-                        is_relevant = any(kw in title.lower() for kw in keywords)
-                    else:
-                        is_relevant = any(kw in title.lower() for kw in keywords)
-                    if is_relevant and title not in seen:
+                    if title in seen:
+                        continue
+                    if any(kw in title.lower() for kw in keywords):
                         seen.add(title)
                         headlines.append(title)
-                if len(headlines) >= 8:
-                    break
+                    if len(headlines) >= 8:
+                        break
         except Exception:
             continue
         if len(headlines) >= 8:
             break
 
-    # If still not enough, add general crypto headlines marked as such
+    # If fewer than 3 coin-specific headlines, add general crypto news
     if len(headlines) < 3:
-        for feed_url in NEWS_FEEDS:
+        for feed_url in NEWS_FEEDS[:2]:
             try:
                 req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req, timeout=8) as resp:
@@ -373,7 +368,7 @@ def fetch_news(coin):
                         title = title_el.text.strip()
                         if title not in seen:
                             seen.add(title)
-                            headlines.append("[general] " + title)
+                            headlines.append(title)
                     if len(headlines) >= 5:
                         break
             except Exception:
@@ -560,6 +555,95 @@ def fetch_market_context():
         return None
 
 
+
+
+def fetch_messari_metrics(coin_name):
+    """
+    Fetch on-chain metrics from Messari — free tier, no key needed.
+    Returns NVT, active addresses, tx volume, developer activity.
+    These are DIFFERENT from price/technical data — no conflicts.
+    """
+    name_map = {
+        "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
+        "avax": "avalanche-2", "link": "chainlink", "doge": "dogecoin", "xrp": "xrp"
+    }
+    slug = name_map.get(coin_name.lower(), coin_name.lower())
+
+    try:
+        url = "https://data.messari.io/api/v1/assets/" + slug + "/metrics"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+
+        metrics = data.get("data", {}).get("metrics", {})
+        if not metrics:
+            return None
+
+        result = {}
+
+        # On-chain activity
+        on_chain = metrics.get("on_chain_data", {})
+        if on_chain:
+            tx_vol = on_chain.get("transfer_volume_usd_last_24_hours")
+            active_addr = on_chain.get("active_addresses")
+            if tx_vol:
+                result["tx_volume_24h_usd"] = round(tx_vol / 1e6, 1)  # in millions
+            if active_addr:
+                result["active_addresses_24h"] = int(active_addr)
+
+        # Market data — NVT ratio (Network Value / Transaction volume)
+        market = metrics.get("market_data", {})
+        if market:
+            mcap = market.get("market_cap_usd", 0)
+            if mcap and result.get("tx_volume_24h_usd"):
+                tx_annualized = result["tx_volume_24h_usd"] * 365
+                if tx_annualized > 0:
+                    nvt = round(mcap / (tx_annualized * 1e6), 1)
+                    result["nvt_ratio"] = nvt
+                    if nvt > 100:
+                        result["nvt_signal"] = "HIGH NVT " + str(nvt) + " — возможна перекупленность по on-chain"
+                    elif nvt < 20:
+                        result["nvt_signal"] = "LOW NVT " + str(nvt) + " — актив недооценён по on-chain"
+                    else:
+                        result["nvt_signal"] = "NVT " + str(nvt) + " — нейтрально"
+
+        # Developer activity
+        dev = metrics.get("developer_activity", {})
+        if dev:
+            commits = dev.get("commits_last_3_months")
+            if commits:
+                result["dev_commits_3m"] = int(commits)
+                if commits > 500:
+                    result["dev_signal"] = "Высокая активность разработки: " + str(commits) + " коммитов за 3 мес"
+                elif commits < 50:
+                    result["dev_signal"] = "Низкая активность разработки: " + str(commits) + " коммитов за 3 мес"
+
+        # All-time high distance
+        ath = metrics.get("all_time_high", {})
+        if ath:
+            ath_price = ath.get("price")
+            current = market.get("price_usd")
+            if ath_price and current:
+                pct_from_ath = round((current - ath_price) / ath_price * 100, 1)
+                result["pct_from_ath"] = pct_from_ath
+                if pct_from_ath < -70:
+                    result["ath_signal"] = str(pct_from_ath) + "% от ATH — исторически зона накопления"
+                elif pct_from_ath > -10:
+                    result["ath_signal"] = str(pct_from_ath) + "% от ATH — цена у максимумов, осторожно"
+
+        if result:
+            print(coin_name.upper() + " Messari: " +
+                  "tx=" + str(result.get("tx_volume_24h_usd", "?")) + "M " +
+                  "addr=" + str(result.get("active_addresses_24h", "?")) +
+                  " NVT=" + str(result.get("nvt_ratio", "?")))
+        return result if result else None
+
+    except Exception as e:
+        print("Messari error for " + coin_name + ": " + str(e))
+        return None
 
 def analyze_timeframe(df):
     rsi = float(ta.momentum.RSIIndicator(df["close"], window=14).rsi().iloc[-1])
@@ -1045,6 +1129,14 @@ def run_cycle(symbol):
     except Exception as e:
         print("Market context error: " + str(e))
 
+    # Messari on-chain metrics
+    messari = None
+    try:
+        coin_name = symbol.split("/")[0].lower()
+        messari = fetch_messari_metrics(coin_name)
+    except Exception as e:
+        print("Messari error: " + str(e))
+
     whales = []  # removed — was too noisy
 
     news_block = ""
@@ -1079,6 +1171,26 @@ def run_cycle(symbol):
             liqs_block = "\nLIQUIDATIONS & OPEN INTEREST (Hyperliquid):\n" + "\n".join(parts) + "\n"
 
     whale_block = ""
+
+    # Messari on-chain block
+    messari_block = ""
+    messari_data = signal.get("messari") if isinstance(signal, dict) else market.get("messari")
+    if not messari_data:
+        messari_data = messari
+    if messari_data:
+        parts = []
+        if messari_data.get("tx_volume_24h_usd"):
+            parts.append("  TX volume 24h: $" + str(messari_data["tx_volume_24h_usd"]) + "M")
+        if messari_data.get("active_addresses_24h"):
+            parts.append("  Active addresses 24h: " + str(messari_data["active_addresses_24h"]))
+        if messari_data.get("nvt_signal"):
+            parts.append("  " + messari_data["nvt_signal"])
+        if messari_data.get("dev_signal"):
+            parts.append("  " + messari_data["dev_signal"])
+        if messari_data.get("ath_signal"):
+            parts.append("  " + messari_data["ath_signal"])
+        if parts:
+            messari_block = "\nON-CHAIN METRICS (Messari — реальное использование сети):\n" + "\n".join(parts) + "\n"
 
     # CryptoCompare sentiment block
     sentiment_block = ""
@@ -1173,6 +1285,7 @@ def run_cycle(symbol):
         liqs_block,
         div_block,
         vol_sr_block,
+        messari_block,
         sentiment_block,
         market_ctx_block,
         news_block,
@@ -1232,6 +1345,7 @@ def run_cycle(symbol):
         "liquidations": liqs,
         "sentiment": sentiment,
         "market_context": market_ctx,
+        "messari": messari,
         "whale_alerts": [],
     }
     result.update(decision)

@@ -674,8 +674,8 @@ function renderLiqsWidget(liqs) {
   if (liqs.open_interest_usd !== undefined) {
     var oiSign = liqs.oi_change_pct > 0 ? "+" : "";
     var oiCol = liqs.oi_change_pct > 5 ? "#00cc88" : liqs.oi_change_pct < -5 ? "#ff4466" : "#ffcc00";
-    parts.push("OI: $" + liqs.open_interest_usd + "B");
-    parts.push("OI chg: " + oiSign + liqs.oi_change_pct + "%");
+    parts.push("OI: $" + liqs.open_interest_usd + "B" +
+      (liqs.oi_change_pct !== undefined ? " · chg: " + (liqs.oi_change_pct > 0 ? "+" : "") + liqs.oi_change_pct + "%" : ""));
   }
   if (!parts.length) return "";
   var html = '<div style="margin-top:6px;padding:6px 10px;background:#0a0e1a;border-radius:8px;border:1px solid #1e3a5f;font-size:12px;color:#aabbcc">';
@@ -743,8 +743,9 @@ function renderCards() {
         (tf4.trend ? '<span class="tf-badge ' + tf4.trend + '">4H: ' + tf4.trend + '</span>' : '') +
         (tf1d.trend ? '<span class="tf-badge ' + tf1d.trend + '">1D: ' + tf1d.trend + '</span>' : '') +
       '</div>' +
-      (news.length ? '<div class="news-item" style="margin-top:8px">📰 ' + news[0] + '</div>' : '') +
-      renderFGWidget(s.fear_greed) +
+      (news.length ? news.filter(n => !n.startsWith('[general]')).slice(0,2).map(n =>
+        '<div class="news-item" style="margin-top:6px;font-size:12px;color:#8899aa">📰 ' + n + '</div>'
+      ).join('') || '<div class="news-item" style="margin-top:6px;font-size:12px;color:#556677">📰 ' + news[0].replace('[general] ','') + '</div>' : '') +
       renderLiqsWidget(s.liquidations) +
       renderWhalesWidget(s.whale_alerts) +
       '<div class="reason">' + (s.reason || "") + '</div>' +
