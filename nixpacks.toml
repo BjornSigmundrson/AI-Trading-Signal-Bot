@@ -2,7 +2,7 @@
 nixPkgs = ["python311"]
 
 [phases.install]
-cmds = ["pip install langchain-anthropic pandas ta ccxt python-dotenv flask psycopg2-binary mcp websocket-client"]
+cmds = ["pip install -r requirements.txt"]
 
 [start]
 cmd = "python server.py & python agent.py"

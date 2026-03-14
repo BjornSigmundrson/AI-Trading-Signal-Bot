@@ -2,7 +2,6 @@ import os
 import json
 import time
 import threading
-import json as _json_ws
 try:
     import websocket
     HAS_WEBSOCKET = True
@@ -1428,7 +1427,7 @@ _live_prices = {}  # {coin: price} — updated in real-time
 def on_hl_message(ws, message):
     """Handle incoming Hyperliquid WebSocket message."""
     try:
-        data = _json_ws.loads(message)
+        data = json.loads(message)
         channel = data.get("channel", "")
 
         if channel == "trades":
@@ -1486,6 +1485,18 @@ def on_hl_message(ws, message):
                                 print("⚡ Emergency signal: " + sym + " " +
                                       signal.get("action") + " " +
                                       str(round(signal.get("confidence", 0) * 100)) + "%")
+                                # Open paper trade for emergency signals
+                                if signal.get("action") in ("BUY", "SELL"):
+                                    sl = signal.get("stop_loss", 0)
+                                    tp = signal.get("take_profit", 0)
+                                    pr = signal.get("price", 0)
+                                    if sl and tp and sl > 0 and tp > 0 and pr > 0:
+                                        try:
+                                            pconn = get_db()
+                                            paper_open_trade(pconn, sym, signal["action"], pr, sl, tp, signal.get("confidence", 0.7))
+                                            pconn.close()
+                                        except Exception as pe:
+                                            print("Emergency paper trade error: " + str(pe))
                             except Exception as se:
                                 print("Emergency signal error: " + str(se))
 
@@ -1506,12 +1517,12 @@ def on_hl_open(ws):
     print("Hyperliquid WebSocket connected")
     for coin in HL_COINS:
         # Subscribe to real-time trades for price monitoring
-        ws.send(_json_ws.dumps({
+        ws.send(json.dumps({
             "method": "subscribe",
             "subscription": {"type": "trades", "coin": coin}
         }))
         # Subscribe to 1m candles for technical updates
-        ws.send(_json_ws.dumps({
+        ws.send(json.dumps({
             "method": "subscribe",
             "subscription": {"type": "candle", "coin": coin, "interval": "1m"}
         }))
