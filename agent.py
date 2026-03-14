@@ -1477,6 +1477,83 @@ def run_price_monitor():
         time.sleep(30)
 
 
+def init_db():
+    """Create all required tables if they don't exist."""
+    conn = get_db()
+    if not conn:
+        print("DB not available")
+        return
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(20),
+            data JSONB,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS signal_results (
+            id SERIAL PRIMARY KEY,
+            signal_id INTEGER,
+            symbol VARCHAR(20),
+            action VARCHAR(10),
+            price_at_signal FLOAT,
+            price_1h FLOAT,
+            price_4h FLOAT,
+            price_24h FLOAT,
+            price_7d FLOAT,
+            price_30d FLOAT,
+            result_1h VARCHAR(10),
+            result_4h VARCHAR(10),
+            result_24h VARCHAR(10),
+            result_7d VARCHAR(10),
+            result_30d VARCHAR(10),
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(20),
+            action VARCHAR(10),
+            entry_price FLOAT,
+            stop_loss FLOAT,
+            take_profit FLOAT,
+            confidence FLOAT,
+            size_usd FLOAT DEFAULT 100,
+            status VARCHAR(10) DEFAULT 'OPEN',
+            exit_price FLOAT,
+            pnl_usd FLOAT,
+            pnl_pct FLOAT,
+            exit_reason VARCHAR(20),
+            opened_at TIMESTAMP DEFAULT NOW(),
+            closed_at TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS paper_portfolio (
+            id SERIAL PRIMARY KEY,
+            balance FLOAT DEFAULT 1000,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("SELECT COUNT(*) FROM paper_portfolio")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO paper_portfolio (balance) VALUES (1000)")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("DB initialized")
+
+
 def run_paper_checker():
     """Background thread — checks paper trades every 15 minutes."""
     print("Paper checker thread started (every 15 min)")
