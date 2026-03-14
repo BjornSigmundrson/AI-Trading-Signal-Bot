@@ -606,6 +606,109 @@ def fetch_onchain_metrics(coin_name):
         return None
 
 
+
+def fetch_liquidation_levels(coin_name):
+    """
+    Fetch recent liquidations from Hyperliquid and find key price clusters.
+    Returns nearest liquidation zones above and below current price.
+    These are real levels where forced closures happened — price often revisits them.
+    """
+    hl_map = {
+        "btc": "BTC", "eth": "ETH", "sol": "SOL",
+        "avax": "AVAX", "link": "LINK", "doge": "DOGE", "xrp": "XRP"
+    }
+    coin = hl_map.get(coin_name.lower())
+    if not coin:
+        return None
+
+    try:
+        # Get recent trades including liquidations
+        body = json.dumps({
+            "type": "recentTrades",
+            "coin": coin
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.hyperliquid.xyz/info",
+            data=body,
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            trades = json.loads(resp.read().decode())
+
+        if not trades or not isinstance(trades, list):
+            return None
+
+        # Filter liquidation trades
+        liq_trades = [t for t in trades if t.get("liquidation")]
+        if len(liq_trades) < 2:
+            return None
+
+        # Get current price from latest trade
+        current_price = float(trades[0].get("px", 0)) if trades else 0
+        if not current_price:
+            return None
+
+        # Cluster liquidation prices
+        liq_prices = [float(t.get("px", 0)) for t in liq_trades if t.get("px")]
+        if not liq_prices:
+            return None
+
+        # Find clusters above and below current price
+        above = sorted([p for p in liq_prices if p > current_price])
+        below = sorted([p for p in liq_prices if p < current_price], reverse=True)
+
+        result = {
+            "liq_count_24h": len(liq_trades),
+            "liq_prices": liq_prices[:10],
+        }
+
+        # Nearest cluster above (resistance - short liquidations)
+        if above:
+            nearest_above = above[0]
+            dist_above = round((nearest_above - current_price) / current_price * 100, 2)
+            result["liq_above"] = nearest_above
+            result["liq_above_dist"] = dist_above
+            result["liq_above_signal"] = (
+                "Кластер коротких ликвидаций на $" + str(round(nearest_above, 4)) +
+                " (+" + str(dist_above) + "%) — магнит для цены вверх"
+            )
+
+        # Nearest cluster below (support - long liquidations)
+        if below:
+            nearest_below = below[0]
+            dist_below = round((current_price - nearest_below) / current_price * 100, 2)
+            result["liq_below"] = nearest_below
+            result["liq_below_dist"] = dist_below
+            result["liq_below_signal"] = (
+                "Кластер длинных ликвидаций на $" + str(round(nearest_below, 4)) +
+                " (-" + str(dist_below) + "%) — возможная поддержка"
+            )
+
+        # Long vs short liquidation ratio
+        long_liqs = [t for t in liq_trades if t.get("side") == "B"]  # Buy side = long liq
+        short_liqs = [t for t in liq_trades if t.get("side") == "A"]  # Ask side = short liq
+        if long_liqs or short_liqs:
+            total = len(long_liqs) + len(short_liqs)
+            if total > 0:
+                long_pct = round(len(long_liqs) / total * 100)
+                result["long_liq_pct"] = long_pct
+                if long_pct > 65:
+                    result["liq_pressure"] = "Давление на лонги: " + str(long_pct) + "% ликвидаций — лонги (медвежий сигнал)"
+                elif long_pct < 35:
+                    result["liq_pressure"] = "Давление на шорты: " + str(100-long_pct) + "% ликвидаций — шорты (бычий сигнал)"
+                else:
+                    result["liq_pressure"] = "Сбалансированные ликвидации: " + str(long_pct) + "% лонги / " + str(100-long_pct) + "% шорты"
+
+        print(coin + " Liq levels: above=$" + str(result.get("liq_above", "?")) +
+              " below=$" + str(result.get("liq_below", "?")) +
+              " count=" + str(result["liq_count_24h"]))
+        return result
+
+    except Exception as e:
+        print("Liq levels error for " + coin_name + ": " + str(e))
+        return None
+
 def analyze_timeframe(df):
     rsi = float(ta.momentum.RSIIndicator(df["close"], window=14).rsi().iloc[-1])
     stoch_rsi = ta.momentum.StochRSIIndicator(df["close"], window=14)
@@ -1113,6 +1216,13 @@ def run_cycle(symbol):
     except Exception as e:
         print("Messari error: " + str(e))
 
+    # Liquidation levels from Hyperliquid
+    liq_levels = None
+    try:
+        liq_levels = fetch_liquidation_levels(coin_name)
+    except Exception as e:
+        print("Liq levels error: " + str(e))
+
     whales = []  # removed — was too noisy
 
     news_block = ""
@@ -1147,6 +1257,21 @@ def run_cycle(symbol):
             liqs_block = "\nLIQUIDATIONS & OPEN INTEREST (Hyperliquid):\n" + "\n".join(parts) + "\n"
 
     whale_block = ""
+
+    # Liquidation levels block
+    liq_levels_block = ""
+    if liq_levels:
+        parts = []
+        if liq_levels.get("liq_above_signal"):
+            parts.append("  " + liq_levels["liq_above_signal"])
+        if liq_levels.get("liq_below_signal"):
+            parts.append("  " + liq_levels["liq_below_signal"])
+        if liq_levels.get("liq_pressure"):
+            parts.append("  " + liq_levels["liq_pressure"])
+        if liq_levels.get("liq_count_24h"):
+            parts.append("  Всего ликвидаций: " + str(liq_levels["liq_count_24h"]))
+        if parts:
+            liq_levels_block = "\nLIQUIDATION MAP (Hyperliquid реальные уровни):\n" + "\n".join(parts) + "\n"
 
     # Messari on-chain block
     messari_block = ""
@@ -1254,6 +1379,10 @@ def run_cycle(symbol):
         "   Final confidence must be: base + " + str(vol_penalty) + ". If vol_ratio 1H=" + str(round(market["tf_1h"].get("vol_ratio",1),2)) + " and 4H=" + str(round(market["tf_4h"].get("vol_ratio",1),2)) + ".",
         "6. If RSI DIVERGENCE detected — it OVERRIDES trend signals. Bearish divergence → prefer SELL/HOLD even in uptrend.",
         "7. Use VOLUME S/R levels for stop_loss and take_profit — they are stronger than simple High/Low.",
+        "8. LIQUIDATION MAP: Price is attracted to liquidation clusters (they act as magnets).",
+        "   - Liq cluster ABOVE current price = target for short squeeze (bullish)",
+        "   - Liq cluster BELOW current price = target for long liquidation cascade (bearish)",
+        "   - Use liq levels to set better take_profit and stop_loss targets.",
         "",
         "SYMBOL: " + market["symbol"],
         "PRICE: $" + str(market["price"]),
@@ -1267,6 +1396,7 @@ def run_cycle(symbol):
         liqs_block,
         div_block,
         vol_sr_block,
+        liq_levels_block,
         messari_block,
         sentiment_block,
         market_ctx_block,
@@ -1328,6 +1458,7 @@ def run_cycle(symbol):
         "sentiment": sentiment,
         "market_context": market_ctx,
         "messari": messari,
+        "liq_levels": liq_levels,
         "whale_alerts": [],
     }
     result.update(decision)
