@@ -443,8 +443,8 @@ async function loadPaper() {
           "<td style='text-align:right'>$" + fmtPrice(t.entry_price) + "</td>" +
           "<td style='text-align:right;color:#ff4466'>$" + fmtPrice(t.stop_loss) + "</td>" +
           "<td style='text-align:right;color:#00cc88'>$" + fmtPrice(t.take_profit) + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + Number(t.pnl_pct).toFixed(2) + "%</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"-") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"-") + Math.abs(t.pnl_pct).toFixed(2) + "%</td>" +
         "</tr>";
       }).join("");
     } else {
@@ -463,8 +463,8 @@ async function loadPaper() {
           "<td style='text-align:right'>$" + fmtPrice(t.entry) + "</td>" +
           "<td style='text-align:right'>$" + fmtPrice(t.exit) + "</td>" +
           "<td style='text-align:center;color:" + reasonCol + ";font-size:11px'>" + (t.exit_reason||"—") + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
-          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"") + Number(t.pnl_pct).toFixed(2) + "%</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_usd>=0?"+":"-") + "$" + Math.abs(t.pnl_usd).toFixed(2) + "</td>" +
+          "<td style='text-align:right;color:" + pnlCol + "'>" + (t.pnl_pct>=0?"+":"-") + Math.abs(t.pnl_pct).toFixed(2) + "%</td>" +
         "</tr>";
       }).join("");
     } else {
