@@ -41,6 +41,7 @@ if not api_key:
     exit(1)
 print("Anthropic API key found")
 
+llm = ChatAnthropic(model="claude-sonnet-4-6", temperature=0, max_tokens=800)
 
 EXCHANGES = None
 
@@ -60,12 +61,13 @@ def get_db():
 
 def update_signal_results():
     """Check old signals and update WIN/LOSS/NEUTRAL results."""
+    if not EXCHANGES:
+        return
     conn = get_db()
     if not conn:
         return
     try:
         cur = conn.cursor()
-        # Get signals that need result updates
         cur.execute("""
             SELECT sr.id, sr.signal_id, sr.symbol, sr.action,
                    sr.price_at_signal, sr.created_at,
@@ -171,6 +173,10 @@ def init_exchanges():
         raise Exception("No exchanges available")
     EXCHANGES = exs
     print("Total exchanges: " + str(len(EXCHANGES)))
+
+
+# Initialize exchanges at module load
+init_exchanges()
 
 
 def fetch_ohlcv_hyperliquid(coin, timeframe, limit=200):
@@ -466,10 +472,9 @@ def fetch_market_context():
     """Fetch S&P500 from Alpha Vantage — free tier 25 req/day.
     Cached for 1 hour to avoid exceeding limits (7 coins x fetch = 7 req/cycle max).
     """
-    import time as _time
     global _market_ctx_cache
     # Return cached if less than 55 minutes old
-    if _market_ctx_cache["data"] and (_time.time() - _market_ctx_cache["ts"]) < 3300:
+    if _market_ctx_cache["data"] and (time.time() - _market_ctx_cache["ts"]) < 3300:
         return _market_ctx_cache["data"]
     try:
         key = os.getenv("ALPHA_VANTAGE_KEY", "")
@@ -497,7 +502,7 @@ def fetch_market_context():
             result["signal"] = "S&P500 нейтрален " + str(spy_change) + "%"
         print("Alpha Vantage SPY: " + str(spy_price) + " (" + str(spy_change) + "%)")
         _market_ctx_cache["data"] = result
-        _market_ctx_cache["ts"] = _time.time()
+        _market_ctx_cache["ts"] = time.time()
         return result
     except Exception as e:
         print("Alpha Vantage error: " + str(e))
@@ -963,6 +968,7 @@ PAPER_INITIAL_BALANCE = 1000  # Стартовый баланс $1000
 
 def paper_check_open_trades(conn, current_prices):
     """Проверяет открытые сделки — закрывает по SL/TP или обновляет P&L."""
+    import datetime as _dt
     try:
         cur = conn.cursor()
         cur.execute("SELECT id, symbol, action, entry_price, stop_loss, take_profit, size_usd FROM paper_trades WHERE status='OPEN'")
@@ -995,7 +1001,6 @@ def paper_check_open_trades(conn, current_prices):
 
             # Auto-close trades older than 24 hours with no significant movement
             if not exit_reason:
-                import datetime as _dt
                 cur.execute("SELECT opened_at FROM paper_trades WHERE id=%s", (tid,))
                 opened_row = cur.fetchone()
                 if opened_row:
@@ -1332,20 +1337,37 @@ def run_cycle(symbol):
 
 
 def save_to_db(symbol, signal):
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
+    conn = get_db()
+    if not conn:
         return None
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO signals (symbol, data) VALUES (%s, %s) RETURNING id",
-        [symbol, json.dumps(signal)],
-    )
-    signal_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
-    return signal_id
+    try:
+        cur = conn.cursor()
+        # Save to signals table
+        cur.execute(
+            "INSERT INTO signals (symbol, data) VALUES (%s, %s) RETURNING id",
+            [symbol, json.dumps(signal)],
+        )
+        signal_id = cur.fetchone()[0]
+
+        # Also insert into signal_results for accuracy tracking
+        cur.execute("""
+            INSERT INTO signal_results
+                (signal_id, symbol, action, price_at_signal, created_at)
+            VALUES (%s, %s, %s, %s, NOW())
+        """, (signal_id, symbol, signal.get("action"), signal.get("price", 0)))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Saved to DB: " + symbol)
+        return signal_id
+    except Exception as e:
+        print("DB error: " + str(e))
+        try:
+            conn.close()
+        except:
+            pass
+        return None
 
 
 def save_signal(symbol, signal):
@@ -1358,7 +1380,6 @@ def save_signal(symbol, signal):
     print("Saved: signal_" + key + ".json")
     try:
         save_to_db(symbol, signal)
-        print("Saved to DB: " + symbol)
     except Exception as e:
         print("DB error: " + str(e))
 
